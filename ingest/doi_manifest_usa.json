@@ -1,0 +1,142 @@
+{
+    "usa_cali_usgs_pv_2016": {
+        "doi": "10.6084/m9.figshare.3385780.v4"
+        , "repo": "sciencebase"
+        , "compression": null
+        , "label_fmt": "geojson"
+        , "crs": "NAD83"
+        , "geom_type": {
+            "features": "Polygon"
+        }
+        , "paper_doi": "https://doi.org/10.1038/sdata.2016.106"
+        , "paper_title": "Distributed solar photovoltaic array location and extent dataset for remote sensing object identification"
+        , "data_records_descr": "The solar array polygon location and extent data as well as the imagery data used to generate this dataset are available as a collected repository of four sets of files (Data Citation 1). The primary dataset within that collection (Data Citation 2) consists of the table of solar panels in four formats with equivalent information to enable these data to be as easily accessed as possible: JSON, GeoJSON, MATLAB (.mat) and comma-separated values (CSV) files. A complete listing of each field, its contents, the format of the data, and the units of the data is given in Table 1. The first of the files is in JavaScript Object Notation (JSON) data-interchange format. The JSON file is titled SolarArrayPolygons.json and each object in this array has fields that correspond to those described in Table 1. The second of the files is a GeoJSON file, SolarArrayPolygons.geojson, which has the latitude and longitude coordinates of each array stored along with all of the properties of each array (described in Table 1), including the pixel-based coordinates. For the MATLAB format, a single file titled SolarArrayPolygons.mat contains ‘data’, the cell array containing all of the columns described in Table 1, as well as an array called ‘fields’ which includes the name of each column of the cell array 'data'. These data are also presented in an alternative, and perhaps more broadly accessible CSV format. There are three CSV files. The file polygonDataExceptVertices.csv contains the 19 fields of Table 1, which is all of the data except for the vertices of the bounding polygons for each array. The vertices are presented in two files, both containing the same polygons: one file contains the coordinates of the vertices as pixel (x,y) values with respect to the image that contains the polygon (polygonVertices_PixelCoordinates.csv) while the other file contains latitude and longitude coordinates for each vertex (polygonVertices_LatitudeLongitude.csv). These two CSV files with polygon vertices also contain a column (the second column of the files) with the number of vertices in the polygon, to make reading the data from the CSV files more straightforward. The polygon ID field, which is the first column in all of these files, links the information between each of the CSV files. All imagery data is from the USGS High Resolution Orthoimagery collection and can be found in Data Citations 3 to 6. For Fresno (Data Citation 3), Stockton (Data Citation 4), and Modesto (Data Citation 5), each image file actually has two files associated with it: <IMAGENAME>.tif, which is the image file itself, and <IMAGENAME>.tif.xml, which is the USGS metadata for the corresponding image. The image names correspond to the 'image_name' field of Table 1 found in the files described earlier (Data Citation 2). The Oxnard imagery (Data Citation 6) also has a set of image files <IMAGENAME>.tif, but only one metadata file for the entire imagery set, which is cirgis_2013_12inch_metadata.xml."
+        , "has_imgs": true
+        , "model_arch": "None"
+        , "label_count": 19433
+        , "file_filters": {
+            "include_patterns": ["*SolarArrayPolygons.geojson"],
+            "exclude_patterns": [],
+            "use_regex": false,
+            "description": "Include only geojson files, exclude rest of files"
+        }
+        , "keep_cols": [
+            "polygon_id",
+            "centroid_latitude",
+            "centroid_longitude",
+            "area_meters"
+        ]
+        , "skip": true
+    },
+    "usa_eia_large_scale_pv_2023": {
+        "doi": "https://eerscmap.usgs.gov/uspvdb/assets/data/uspvdbGeoJSON.zip"
+        , "dataset_doi": "10.5281/zenodo.8038684"
+        , "repo": "direct_download"
+        , "compression": "zip"
+        , "label_fmt": "shp"
+        , "paper_doi": "https://doi.org/10.1038/sdata.2016.106"
+        , "has_imgs": false
+        , "label_count": 4186
+        , "skip": false
+    },
+    "usa_gm_seus_v1_2025": {
+        "doi": "https://doi.org/10.5281/zenodo.14827819",
+        "repo": "zenodo",
+        "compression": "zip", 
+        "label_fmt": "gpkg",
+        "max_mb": 3500,
+        "has_imgs": true,
+        "paper_doi": "10.1038/s41597-025-05862-4",
+        "paper_title": "GM-SEUS: A harmonized dataset of ground-mounted solar energy in the US with enhanced metadata",
+        "data_records_descr": "GM-SEUS v1.0 includes over 15,000 commercial- and utility-scale ground-mounted solar arrays and 2.92 million unique solar panel-rows. Includes value-added attributes: installation year, azimuth, mount technology, panel-row area, and installed capacity.",
+        "label_count": 2920000,
+        "file_filters": {
+            "include_patterns": ["^GMSEUS_Arrays_Final\\.gpkg$"],
+            "exclude_patterns": [
+                "GMSEUS_Panels_Final", 
+                "GMSEUS_NAIP", 
+                "LabeledImages",
+                "__MACOSX"
+            ],
+            "use_regex": true,
+            "description": "Ingest only the detailed panel-row geometries, excluding array boundaries and training data."
+        },
+        "keep_cols": [
+            "panelID",
+            "instYrLT",
+            "capMWest",
+            "rowAzimuth",
+            "rowMount",
+            "GCR1"
+        ],
+        "skip": false
+    },
+    "global_pv_inventory_sent2_spot_2021": {
+        "doi": "10.5281/zenodo.5005867"
+        , "repo": "zenodo"
+        , "compression": null
+        , "label_fmt": "geojson"
+        , "geom_type": [
+            "Polygon"
+        ]
+        , "crs": "WGS84"
+        , "paper_doi": "https://doi.org/10.1038/s41586-021-03957-7"
+        , "paper_title": "A global inventory of photovoltaic solar energy generating units"
+        , "data_records_descr": "see supplementary table 8 at https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-021-03957-7/MediaObjects/41586_2021_3957_MOESM1_ESM.pdf"
+        , "has_imgs": false
+        , "label_count": [
+            50426,
+            68661
+        ]
+        , "file_filters": {
+            "include_patterns": ["predicted_.*\\.geojson$", ".*polygons\\.geojson$"],
+            "exclude_patterns": [".*tiles\\.geojson$"],
+            "use_regex": true,
+            "description": "Include all polygon files (predicted, train, cv, test) for comprehensive PV coverage including smaller facilities"
+        }
+        , "keep_cols": [
+            "unique_id",
+            "area"
+        ]
+        , "skip": true
+    },
+    "global_pv_inventory_sent2_2024": {
+        "doi": "https://github.com/yzyly1992/GloSoFarID/tree/main/data_coordinates",
+        "repo": "github",
+        "compression": null,
+        "label_fmt": "json",
+        "crs": null,
+        "geom_type": [
+            "Point"
+        ],
+        "has_imgs": true,
+        "label_count": 6793,
+        "skip": true
+    },
+    "global_harmonized_large_solar_farms_2020": {
+        "doi": "10.6084/m9.figshare.11310269.v6"
+        , "repo": "figshare"
+        , "compression": "zip"
+        , "label_fmt": "gpkg"
+        , "paper_doi": "https://doi.org/10.1038/s41597-020-0469-8"
+        , "paper_title": "Harmonised global datasets of wind and solar farm locations and power"
+        , "data_records_descr": "This dataset is stored in three different formats: shapefiles for use with GIS software, geopackage for open-source usage, and .csv format for ease of use in any statistical software. Two final datasets were produced that represent the best publicly available global, harmonized geospatial data for field-scale solar PV and wind installations (Fig. 5). We provide vector data (point and polygon) for grouped installations (more than two features; Methods), in Eckert IV equal area projection. Global solar PV installations: (a) global_solar_2020.gpkg (b) global_solar_2020.csv (c) global_solar_2020 layer in global_wind_solar_2020.gdb; Both datasets include the following variables: x_id - unique ID for data record; GID_0 - country ISO-3 code; panels - the number of OSM tagged features that occurred within the boundaries of the cluster; panel.area (solar only) -  the (estimated) area of panels in the cluster **in km2**; landscape.area - the area of the site in km2, i.e. the area bounded by the outermost points or polygons; water - binary indicator of whether the feature occurs in an area classified as water; urban - binary indicator of whether the feature occurs on land classified as urban; power - estimated power capacity **in MW**."
+        , "geom_type": [
+            "Polygon"
+        ]
+        , "crs": "WGS84"
+        , "has_imgs": false
+        , "label_count": 35272
+        , "file_filters": {
+            "include_patterns": [".*solar.*WGS84.*\\.(gpkg)$"],
+            "exclude_patterns": [".*wind.*"],
+            "use_regex": true,
+            "description": "Only solar farms in WGS84 CRS, exclude wind energy"
+        }
+        , "keep_cols": [
+            "sol_id",
+            "panels.area"
+        ]
+        , "skip": true
+    }
+}

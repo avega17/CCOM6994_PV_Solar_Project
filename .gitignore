@@ -1,0 +1,328 @@
+# =============================================================================
+# ice-mELT DuckLake Project .gitignore
+# =============================================================================
+
+# contains actual cloud URIs
+cloud_deployment_ready.json
+
+# =============================================================================
+# SECRETS AND CREDENTIALS - NEVER COMMIT THESE
+# =============================================================================
+
+# Environment variables and secrets
+.env
+.env.*
+secrets.toml
+.secrets.toml
+*.secrets.toml
+eo-pv-elt/package-lock.yml
+.wrangler
+uv.lock
+
+# Neon 
+.neon
+
+# API keys and tokens
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+
+# Cloud provider credentials
+.aws/
+.gcp/
+.azure/
+*credentials*
+*config*
+*.user.yml
+
+# =============================================================================
+# LARGE DATA FILES - PREVENT REPO BLOAT
+# =============================================================================
+
+database.url
+connection_string.txt
+db/env_scripts/*.fish
+db/env_scripts/*.sh
+db/*
+db/*/*.parquet
+
+# Database files
+*.duckdb
+*.duckdb.wal
+*.wal
+*.db
+*.sqlite
+*.sqlite3
+
+db/.*_cache/
+
+# Large geospatial files
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qix
+*.sbn
+*.sbx
+*.fbn
+*.fbx
+*.ain
+*.aih
+*.ixs
+*.mxs
+*.atx
+*.xml
+*.gpkg
+*.gdb/
+*.mdb
+
+# Raster data
+*.tif
+*.tiff
+*.geotiff
+*.img
+*.hdf
+*.nc
+*.zarr/
+
+# Parquet and Arrow files (large datasets)
+*.parquet
+*.arrow
+*.feather
+
+# Compressed archives (except small examples)
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.rar
+*.7z
+
+# =============================================================================
+# PYTHON
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+**/*.py[cod]
+*$py.class
+**/*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# TODO feature development and bug resolution
+*TODO.md
+
+# Jupyter Notebook
+.ipynb_checkpoints
+.jupyter
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# =============================================================================
+# DBT SPECIFIC
+# =============================================================================
+
+# dbt artifacts
+target/
+dbt_packages/
+logs/
+.dbt/
+
+# =============================================================================
+# NODE.JS / EVIDENCE DASHBOARD
+# =============================================================================
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory
+coverage/
+*.lcov
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# dotenv environment variable files
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# Next.js build output
+.next
+out
+
+# Temporary folders
+tmp/
+temp/
+
+# =============================================================================
+# OPERATING SYSTEM
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# EDITORS AND IDES
+# =============================================================================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# =============================================================================
+# PROJECT SPECIFIC
+# =============================================================================
+
+# Temporary processing files
+temp_*
+tmp_*
+scratch/
+sandbox/
+
+# Log files
+*.log
+logs/
+
+# Cache directories
+.cache/
+cache/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# =============================================================================
+# ALLOW SPECIFIC FILES (override above patterns)
+# =============================================================================
+
+# Keep example/template files
+!*example*
+!*template*
+!*sample*
+
+# Keep small test datasets
+!datasets/test/
+!datasets/examples/
+
+# Keep documentation assets
+!docs/assets/
+!docs/images/
+.neon_local/

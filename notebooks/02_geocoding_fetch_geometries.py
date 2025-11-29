@@ -65,10 +65,10 @@ plt.style.use('seaborn-v0_8-darkgrid')
 # 
 # ## 📥 Task 1: Retrieve Data from Local DuckDB
 # 
-# In the previous notebook, we saved our processed solar panel data to a local DuckDB file `db/pv_project.ddb`. We will now load it back.
+# In the previous notebook, we saved our processed solar panel data to a local DuckDB file `../db/pv_project.ddb`. We will now load it back.
 
 # %%
-DB_PATH = os.getenv('PROJECT_DB', 'db/pv_project.ddb')
+DB_PATH = os.getenv('PROJECT_DB', '../db/pv_project.ddb')
 
 PROJECT_AOI = os.getenv('PROJECT_AOI', '-161.0,17.8,-65.2,47.8')
 PROJECT_AOI = (float(p) for p in PROJECT_AOI.split(','))
@@ -84,17 +84,20 @@ tables = con.execute("SHOW TABLES").fetchall()
 print(f"   Tables found: {[t[0] for t in tables]}")
 
 # Load the processed PV data
-# We use read_sql to get a DataFrame, then convert to GeoDataFrame
+# We use read_df to get a pandas DataFrame, then convert to GeoDataFrame1
 print("   Loading 'processed_pv_data'...")
-pv_df = con.execute("SELECT * FROM processed_pv_data").df()
+try:
+    pv_df = con.execute("SELECT ST_AsText(geometry) AS geometry, * EXCLUDE geometry FROM processed_pv_data").df()
+except Exception as e:
+    print(f"❌ Error loading 'processed_pv_data': {e}")
+    raise e
 
 # Convert WKT to Geometry
-if 'geometry' in pv_df.columns:
-    pv_df['geometry'] = pv_df['geometry'].apply(wkt.loads)
-    pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')
-    print(f"✅ Loaded {len(pv_gdf):,} rows into GeoDataFrame.")
-else:
-    print("❌ Error: No geometry column found.")
+print("   Converting 'geometry' from WKT to Shapely geometries...")
+pv_df['geometry'] = pv_df['geometry'].apply(wkt.loads)
+
+pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')
+print(f"✅ Loaded {len(pv_gdf):,} rows into GeoDataFrame.")
 
 con.close() # Close for now, we'll reopen later
 
@@ -150,19 +153,21 @@ else:
 # %%
 # compare to online/API reverse geocoding via geopy and geopandas
 # parse list of (lat, lon) tuples as shapely Points
-t1 = time.time()
-gpd.tools.reverse_geocode([Point(lon, lat) for lat, lon in coords[:15]])
-t2 = time.time()
-print(f"✅ Geocoded 15 points in {t2 - t1:.2f}s using geopandas reverse_geocode.")
+
+try:
+    t1 = time.time()
+    # note this can cause API rate limiting if you run this too often
+    gpd.tools.reverse_geocode([Point(lon, lat) for lat, lon in coords[:15]])
+    t2 = time.time()
+    print(f"✅ Geocoded 15 points in {t2 - t1:.2f}s using geopandas reverse_geocode.")
+# handle GeocoderUnavailable exception
+except Exception as e:
+    print(f"⚠️ Geopandas reverse geocoding failed. Verify if API is rate limited due to usage: {e}")
+
 
 # %%
 # show admin info from offline reverse geocoder
 pd.DataFrame(results).head()
-
-# %% [markdown]
-# ## 📥 Task 2.5: Refining Location Geometries via US Census Geographies
-# 
-# We will use the US Census Bureau's API via the `censusdis` [python library](https://pypi.org/project/censusdis/) to refine our location geometries for points in the United States. This will help us get more accurate administrative boundaries for our solar panel locations and optimize any further fetching we need to perform from Overture Maps.
 
 # %%
 # 1. Get unique countries
@@ -180,6 +185,14 @@ print(f"Removed {BBOX_ROWS - len(pv_gdf)} rows outside target countries.")
 country_state_counts = pv_gdf.groupby(['country_code', 'rg_state']).size().sort_values(ascending=False).reset_index(name='counts')
 print("📊 Counts by Country and State:")
 print(country_state_counts)
+
+# %% [markdown]
+# ## 📥 Task 2.5: Refining Location Geometries via US Census Geographies
+# 
+# We will use the US Census Bureau's API via the `censusdis` [python library](https://pypi.org/project/censusdis/) to refine our location geometries for points in the United States. This will help us get more accurate administrative boundaries for our solar panel locations and optimize any further fetching we need to perform from Overture Maps.
+
+# %% [markdown]
+# ### Fetch Census States, Visualize, and keep attributes for states that contain solar panel points
 
 # %%
 # following geography + geometry tutorial from: https://censusdis.readthedocs.io/en/latest/nb/Data%20With%20Geometry.html
@@ -203,7 +216,8 @@ for i, geom in enumerate(geom_sample):
 
 
     gpd.GeoSeries([geom]).plot(ax=axes[i], color='lightblue', edgecolor='black', alpha=0.6)
-    axes[i].set_title(f"Sample {i+1}")
+    state_name = gdf_state_bounds.iloc[rand_idx + i]["NAME"]
+    axes[i].set_title(f"{state_name} Geometry")
     axes[i].axis('off')
 plt.tight_layout()
 plt.show()
@@ -279,6 +293,9 @@ pv_enriched_gdf.sample(3)
 assert pv_enriched_gdf['STATE_FIPS'].isna().sum() == 0, "❌ Some PV labels have no STATE_FIPS assigned!"
 print("✅ All PV labels have STATE_FIPS assigned.")
 
+# %% [markdown]
+# ### Fetch Census County Geometries, Visualize, and keep attributes for counties that contain solar panel points
+
 # %%
 county_sample_pct = 0.25  # 25% sample of counties for visualization
 
@@ -296,7 +313,7 @@ sample_county_bounds = county_bounds_gdf[county_bounds_gdf['STATEFP'] == sample_
 # plot state polygon and sampled counties within the state geometry
 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
 # plot state boundary
-gpd.GeoSeries([]).plot(ax=ax, color='lightgrey', edgecolor='black', alpha=0.5)
+gpd.GeoSeries([sample_state_bounds]).plot(ax=ax, color='lightgrey', edgecolor='black', alpha=0.5)
 # plot sampled counties; place legend outside the plot and at bottom
 sample_county_bounds.plot(ax=ax, column='NAME', cmap='tab20', edgecolor='black', alpha=0.7, legend=True, legend_kwds={'loc': 'lower left', 'bbox_to_anchor': (1.0, 0)})
 ax.set_title(f"Sampled {county_sample_pct * 100:.0f}% of Counties in {gdf_state_bounds.iloc[rand_state_idx]['NAME']} for Visualization")
@@ -384,6 +401,9 @@ pv_state_county_gdf.sample(3)
 assert pv_state_county_gdf['COUNTY_FIPS'].isna().sum() == 0, "❌ Some PV labels have no COUNTY_FIPS assigned!"
 print("✅ All PV labels have COUNTY_FIPS assigned.")
 
+# %% [markdown]
+# ### Fetch Census tracts, Visualize, and keep attributes for tracts that contain solar panel points
+
 # %%
 # perform the same exercise but for census tracts
 tract_bounds_gdf = reader.read_cb_shapefile(shapefile_scope="us", geography="tract", crs="EPSG:4326")
@@ -392,6 +412,9 @@ display(tract_bounds_gdf.head())
 
 # plot the previously chosen sample state, the county in that state with the most PV installations (include 0), and all tracts within that county
 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+
+ax.axis('off')
+ax.set_title(f"Census Tracts in County with Most PV Installations in {gdf_state_bounds.iloc[rand_state_idx]['NAME']}")
 
 # get county with most PV installations in the sample state
 sample_state_pv = pv_state_county_gdf[pv_state_county_gdf['STATE_GEOID'] == gdf_state_bounds.iloc[rand_state_idx]['GEOID']]
@@ -508,6 +531,9 @@ pv_final_gdf = gpd.GeoDataFrame(pv_final_gdf, geometry='geometry', crs='EPSG:432
 pv_final_gdf.sample(3)
 
 # %%
+tract_bounds_gdf.head(3)
+
+# %%
 assert pv_final_gdf['TRACT_GEOID'].isna().sum() == 0, "❌ Some PV labels have no TRACT_GEOID assigned!"
 print("✅ All PV labels have TRACT_GEOID assigned.")
 
@@ -605,7 +631,7 @@ print(f"   Memory: {divisions_gdf.memory_usage(deep=True).sum() / 1024**2:.1f} M
 # 3. **GeoParquet Exports**: We will also export the divisions to a GeoParquet file, [optimized with spatial sorting (Hilbert curve)](https://medium.com/radiant-earth-insights/using-duckdbs-hilbert-function-with-geop-8ebc9137fb8a).; A
 
 # %%
-# pv_gdf['geometry'].head().apply(lambda geom: geom.wkt)
+pv_final_gdf.geometry.dtype
 
 # %%
 print("💾 Saving to Persistent DuckDB & GeoParquet\n")
@@ -614,33 +640,69 @@ print("💾 Saving to Persistent DuckDB & GeoParquet\n")
 con = duckdb.connect(DB_PATH)
 con.execute("INSTALL spatial; LOAD spatial;")
 
-# 1. Save PV Data (Overwrite with new country codes)
-# We convert geometry back to WKT for storage if needed, or use DuckDB's geometry type if supported
-# For simplicity and compatibility, we often store as WKT or binary in DuckDB and cast on load
-print("   Saving 'processed_pv_data' (with country codes)...")
-pv_save_df = pv_gdf.copy()
-# drop invalid geometries to avoid warnings
-pv_save_df = pv_save_df[pv_save_df['geometry'].is_valid]
-pv_save_df['geometry'] = pv_save_df['geometry'].apply(lambda x: x.wkt)
-con.execute("CREATE OR REPLACE TABLE processed_pv_data AS SELECT * FROM pv_save_df")
+# save our pv_final_gdf with census identifiers in our duckdb database as `census_enriched_pv_data`
+print("   Saving `pv_final_gdf`: our PV solar panel locations dataset enriched with census identifiers for analysis and visualization...")
+pv_final_gdf['geometry'] = pv_final_gdf['geometry'].apply(lambda geom: geom.wkt)
+# create table with spatial index on geometry
+con.execute("""
+    CREATE OR REPLACE TABLE census_enriched_pv_data AS
+    SELECT ST_GeomFromText(geometry) as geometry, * EXCLUDE geometry FROM pv_final_gdf;
+""")
 
-# 2. Save Divisions Data
+# display available tables and describe the new table
+tables = con.execute("SHOW TABLES").fetchall()
+print(f"   Tables found: {[t[0] for t in tables]}")
+print("\n   Describing `census_enriched_pv_data` table:")
+display(con.execute("DESCRIBE census_enriched_pv_data").df())
+
+# %% [markdown]
+# ### DuckDB Spatial Indexing (R-Tree)
+# 
+# DuckDB can also create persistent R-Tree indexes. This is useful when we save the data to the database.
+# 
+# We will demonstrate this in the next step when we save the data.
+
+# %%
+con.execute("""
+    CREATE INDEX idx_census_enriched_pv_data_geom ON census_enriched_pv_data USING RTREE (geometry);
+""")
+print("   ✅ Saved `census_enriched_pv_data` with spatial index on geometry.")
+
+# %%
+# for now stopping before spatial join as it's easy to reach OOM errors; need to validate this can run in workstation and how much RAM is needed
+raise SystemExit("🛑 Ending Notebook Execution Here.")
+
+# %% [markdown]
+# ### Save matching Overture Maps divisions to DuckDB with R-Tree index
+
+# %%
+# 1. Save Divisions Data that intersects with our pv_final_gdf labels 
 print("   Saving 'administrative_divisions'...")
 div_save_df = divisions_gdf.copy()
-# div_save_df['geometry'] = div_save_df['geometry'].apply(lambda x: x.wkt)
-con.execute("CREATE OR REPLACE TABLE administrative_divisions AS SELECT * FROM div_save_df")
+div_save_df['geometry'] = div_save_df['geometry'].apply(lambda x: x.wkt)
+# Note: DuckDB R-Tree requires GEOMETRY type
+divs_view = "CREATE OR REPLACE VIEW administrative_divisions AS SELECT ST_GeomFromText(geometry) as geometry, * EXCLUDE (geometry) FROM div_save_df"
+con.execute(divs_view)
 
 # 3. Create Spatial Index in DuckDB
 print("   Creating R-Tree index on 'administrative_divisions'...")
-# Note: DuckDB R-Tree requires GEOMETRY type. We stored as VARCHAR (WKT) above.
-# Let's convert to GEOMETRY and index.
+# only materialize as tables divisions that intersect with the census tracts present in our pv_final_gdf
+pv_tract_geoids = pv_final_gdf['TRACT_GEOID'].unique().tolist()
+# only keep census tract geometries in this list
+pv_tract_geoms = tract_bounds_gdf[tract_bounds_gdf['GEOID'].isin(pv_tract_geoids)]
+# convert to WKT for DuckDB processing
+pv_tract_geoms['geometry'] = pv_tract_geoms['geometry'].apply(lambda x: x.wkt)
+con.register("pv_tracts_geoms", pv_tract_geoms)
+# create a table with only divisions that intersect with these tracts
 con.execute("""
     -- Create a view or table with actual geometry type for indexing
     CREATE OR REPLACE TABLE admin_div_geom AS 
-    SELECT 
-        division_id, subtype, country, region, name, 
-        ST_GeomFromText(geometry) as geom 
-    FROM administrative_divisions;
+    SELECT division_id, subtype, country, region, name, geometry
+    FROM administrative_divisions
+    INNER JOIN (
+        SELECT ST_GeomFromText(geometry) as geometry FROM pv_tract_geoms
+    ) AS tracts
+    ON ST_Intersects(administrative_divisions.geometry, tracts.geometry);
     
     -- Create Index
     CREATE INDEX idx_admin_div_geom ON admin_div_geom USING RTREE (geom);
@@ -664,29 +726,6 @@ con.execute(f"""
 """)
 print("   ✅ GeoParquet export complete.")
 
-# %%
-# save our pv_final_gdf with census identifiers in our duckdb database as `census_enriched_pv_data`
-print("   Saving `pv_final_gdf`: our PV solar panel locations dataset enriched with census identifiers for analysis and visualization...")
-
-# create table with spatial index on geometry
-con.execute("""
-    CREATE OR REPLACE TABLE census_enriched_pv_data AS
-    SELECT * FROM pv_final_gdf;
-""")
-
-# %% [markdown]
-# ### DuckDB Spatial Indexing (R-Tree)
-# 
-# DuckDB can also create persistent R-Tree indexes. This is useful when we save the data to the database.
-# 
-# We will demonstrate this in the next step when we save the data.
-
-# %%
-con.execute("""
-    CREATE INDEX idx_census_enriched_pv_data_geom ON census_enriched_pv_data USING RTREE (ST_GeomFromText(geometry));
-""")
-print("   ✅ Saved `census_enriched_pv_data` with spatial index on geometry.")
-
 # %% [markdown]
 # ---
 # 
@@ -701,65 +740,65 @@ print("   ✅ Saved `census_enriched_pv_data` with spatial index on geometry.")
 # We will use DuckDB's spatial engine to do this efficiently.
 
 # %%
-print("🔗 Performing Spatial Join in DuckDB...")
+# print("🔗 Performing Spatial Join in DuckDB...")
 
-# We need to prepare the PV data as geometry for the join
-con.execute("""
-    -- Create geometry table for PV data
-    CREATE OR REPLACE TABLE pv_geom AS 
-    SELECT 
-        *, 
-        ST_GeomFromText(geometry) as geom 
-    FROM processed_pv_data;
+# # We need to prepare the PV data as geometry for the join
+# con.execute("""
+#     -- Create geometry table for PV data
+#     CREATE OR REPLACE TABLE pv_geom AS 
+#     SELECT 
+#         *, 
+#         ST_GeomFromText(geometry) as geom 
+#     FROM processed_pv_data;
     
-    -- Create Index on PV data (optional but good for performance)
-    CREATE INDEX idx_pv_geom ON pv_geom USING RTREE (geom);
-""")
+#     -- Create Index on PV data (optional but good for performance)
+#     CREATE INDEX idx_pv_geom ON pv_geom USING RTREE (geom);
+# """)
 
-# Perform the Spatial Join
-# We join PV points (pv_geom) with Divisions polygons (admin_div_geom)
-# We prioritize 'region' (State) or 'county' if available
-enrichment_query = """
-    CREATE OR REPLACE TABLE enriched_pv_data AS
-    SELECT 
-        pv.* EXCLUDE (geom),
-        div.name as division_name,
-        div.subtype as division_subtype,
-        div.division_id as division_id
-    FROM pv_geom pv
-    LEFT JOIN admin_div_geom div 
-    ON ST_Within(pv.geom, div.geom)
-    -- If a point is in multiple divisions (e.g. County AND State), we might get duplicates.
-    -- We can filter or prioritize specific subtypes if needed.
-    -- For now, let's keep all and maybe deduplicate later or pick the most granular.
-"""
+# # Perform the Spatial Join
+# # We join PV points (pv_geom) with Divisions polygons (admin_div_geom)
+# # We prioritize 'region' (State) or 'county' if available
+# enrichment_query = """
+#     CREATE OR REPLACE TABLE enriched_pv_data AS
+#     SELECT 
+#         pv.* EXCLUDE (geom),
+#         div.name as division_name,
+#         div.subtype as division_subtype,
+#         div.division_id as division_id
+#     FROM pv_geom pv
+#     LEFT JOIN admin_div_geom div 
+#     ON ST_Within(pv.geom, div.geom)
+#     -- If a point is in multiple divisions (e.g. County AND State), we might get duplicates.
+#     -- We can filter or prioritize specific subtypes if needed.
+#     -- For now, let's keep all and maybe deduplicate later or pick the most granular.
+# """
 
-# Note: A simple join might explode rows if a point is in County AND State.
-# Let's try to pick the 'region' (State) level for this example, or just take the first match.
-# Better approach: Get the Region (State) specifically.
+# # Note: A simple join might explode rows if a point is in County AND State.
+# # Let's try to pick the 'region' (State) level for this example, or just take the first match.
+# # Better approach: Get the Region (State) specifically.
 
-enrichment_query_region = """
-    CREATE OR REPLACE TABLE enriched_pv_data AS
-    SELECT 
-        pv.* EXCLUDE (geom),
-        div.name as region_name,
-        div.division_id as region_id
-    FROM pv_geom pv
-    LEFT JOIN admin_div_geom div 
-    ON ST_Within(pv.geom, div.geom)
-    WHERE div.subtype = 'region'
-"""
+# enrichment_query_region = """
+#     CREATE OR REPLACE TABLE enriched_pv_data AS
+#     SELECT 
+#         pv.* EXCLUDE (geom),
+#         div.name as region_name,
+#         div.division_id as region_id
+#     FROM pv_geom pv
+#     LEFT JOIN admin_div_geom div 
+#     ON ST_Within(pv.geom, div.geom)
+#     WHERE div.subtype = 'region'
+# """
 
-print("   Running spatial join (enriching with Region/State info)...")
-t1 = time.time()
-con.execute(enrichment_query_region)
-t2 = time.time()
-print(f"   ✅ Join complete in {t2 - t1:.2f}s")
+# print("   Running spatial join (enriching with Region/State info)...")
+# t1 = time.time()
+# con.execute(enrichment_query_region)
+# t2 = time.time()
+# print(f"   ✅ Join complete in {t2 - t1:.2f}s")
 
-# Verify results
-count_enriched = con.execute("SELECT COUNT(*) FROM enriched_pv_data WHERE region_name IS NOT NULL").fetchone()[0]
-total_pv = con.execute("SELECT COUNT(*) FROM enriched_pv_data").fetchone()[0]
-print(f"   Enriched {count_enriched:,} / {total_pv:,} points with Region info.")
+# # Verify results
+# count_enriched = con.execute("SELECT COUNT(*) FROM enriched_pv_data WHERE region_name IS NOT NULL").fetchone()[0]
+# total_pv = con.execute("SELECT COUNT(*) FROM enriched_pv_data").fetchone()[0]
+# print(f"   Enriched {count_enriched:,} / {total_pv:,} points with Region info.")
 
 # %% [markdown]
 # ---

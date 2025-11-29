@@ -10,8 +10,9 @@ cloud_deployment_ready.json
 # =============================================================================
 
 # Environment variables and secrets
-.env
-.env.*
+# NOTE: this project has no sensitive info like API keys or credentials in .env files, but in Production these should not be committed to version control.
+# .env
+# .env.*
 secrets.toml
 .secrets.toml
 *.secrets.toml
@@ -139,7 +140,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual environments
-.env
+# .env
 .venv
 env/
 venv/

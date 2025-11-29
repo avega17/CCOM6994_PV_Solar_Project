@@ -9,7 +9,7 @@ This project investigates the spatial correlations between photovoltaic (PV) sol
 - **Spatial EDA**: Perform exploratory data analysis on PV installation locations enriched with census, land cover, and climate variables
 - **Correlation Identification**: Discover relationships between solar panel density and sociodemographic indicators (income, housing, population)
 - **Geophysical Analysis**: Analyze how land use patterns, solar irradiance, and temperature influence PV installation distribution
-- **Data Pipeline Development**: Build reproducible workflows using [GeoPandas](https://geopandas.org/) and [DuckDB](https://geo.rocks/post/duckdb_geospatial/) for geospatial data processing
+- **Data Pipeline Development**: Build reproducible workflows using [GeoPandas](https://geopandas.org/), [DuckDB](https://geo.rocks/post/duckdb_geospatial/), and [Xarray](https://docs.xarray.dev/en/stable/getting-started-guide/why-xarray.html) for geospatial data processing
 
 ---
 
@@ -116,8 +116,8 @@ Open-source geospatial data providing land use classifications and administrativ
 - **Source**: [Overture Maps Foundation](https://overturemaps.org/)
 - **Themes Used**:
   - `divisions`: Administrative boundaries (country, region, county, locality)
-  - `base/land_use`: Land use polygons (residential, commercial, industrial, agricultural)
-  - `base/land_cover`: Physical land cover classifications
+  - `base/land_use`: Land use polygons (residential, commercial, industrial, agricultural) [Sourced from OpenStreetMap]
+  - `base/land_cover`: Physical land cover classifications [Sourced from ESA's WorldCover dataset]
 - **Access**: Direct S3 queries via DuckDB
 
 ### 4. ERA5 Climate Reanalysis (Historical Weather)
@@ -125,7 +125,7 @@ Open-source geospatial data providing land use classifications and administrativ
 Global climate reanalysis dataset providing historical temperature and solar irradiance data.
 
 - **Source**: [Copernicus Climate Data Store / ECMWF republished by Google BigQuery Public Datasets](https://console.cloud.google.com/marketplace/product/bigquery-public-data/arco-era5)
-- **Variables** [see available variables](https://github.com/google-research/arco-era5/?tab=readme-ov-file#analysis-ready-data)
+- **Variables** (see [available variables here](https://github.com/google-research/arco-era5/?tab=readme-ov-file#analysis-ready-data)):
   - Surface solar radiation downwards (SSRD)
   - 2-meter temperature (T2M)
   - fraction of Cloud cover
@@ -157,7 +157,7 @@ CCOM6994_PV_Solar_Project/
 ## References
 
 - [uv Documentation](https://docs.astral.sh/uv/)
-- [GeoPandas User Guide](https://geopandas.org/)
+- [GeoPandas User Guide](https://geopandas.org/en/stable/docs/user_guide.html)
 - [DuckDB Spatial Extension](https://duckdb.org/docs/extensions/spatial.html)
-- [Overture Maps Schema](https://docs.overturemaps.org/)
+- [Overture Maps Data Guides](https://docs.overturemaps.org/guides/)
 - [censusdis Documentation](https://censusdis.readthedocs.io/)

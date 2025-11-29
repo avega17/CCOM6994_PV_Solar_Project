@@ -2,31 +2,22 @@
 annotated-types
 censusdis
 contextily
-# cubo
 datahugger
 duckdb>=1.4.1
-fiona
 folium
 fsspec
 # gdal
 geopandas
-geopy
-geos
-# graphviz
-# sf-hamilton
-# sf-hamilton[dask]
-# optional but recommended: 
-# sf-hamilton[cli]
+# geopy
+# geos
 
 # Discrete Global Grid System used for spatial indexing
 h3>=4.2.0
-ipyleaflet
+# ipyleaflet
 ipython
 # vs code dependency
 ipykernel
 ipywidgets
-# jupysql>=0.11
-# jupyterlab
 # jupytext
 
 # lonboard
@@ -39,14 +30,12 @@ overturemaestro  # Efficient Overture Maps data access
 pandas
 plotly
 # pvlib
-pycountry
-pydeck
-pygeohash
+# pycountry
+# pydeck
+# pygeohash
 pyproj
 python-dotenv
 reverse-geocoder
-s3fs
-sciencebasepy
 scikit-learn
 # scipy
 seaborn

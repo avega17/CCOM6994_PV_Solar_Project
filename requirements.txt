@@ -29,10 +29,11 @@ ipywidgets
 # jupyterlab
 # jupytext
 
-lonboard
+# lonboard
 matplotlib
 notebook
 numpy
+openpyxl
 overturemaps
 overturemaestro  # Efficient Overture Maps data access
 pandas

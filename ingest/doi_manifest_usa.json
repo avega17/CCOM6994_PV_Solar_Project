@@ -26,7 +26,7 @@
             "centroid_longitude",
             "area_meters"
         ]
-        , "skip": true
+        , "skip": false
     },
     "usa_eia_large_scale_pv_2023": {
         "doi": "https://eerscmap.usgs.gov/uspvdb/assets/data/uspvdbGeoJSON.zip"
@@ -98,7 +98,7 @@
             "unique_id",
             "area"
         ]
-        , "skip": true
+        , "skip": false
     },
     "global_pv_inventory_sent2_2024": {
         "doi": "https://github.com/yzyly1992/GloSoFarID/tree/main/data_coordinates",
@@ -137,6 +137,6 @@
             "sol_id",
             "panels.area"
         ]
-        , "skip": true
+        , "skip": false
     }
 }

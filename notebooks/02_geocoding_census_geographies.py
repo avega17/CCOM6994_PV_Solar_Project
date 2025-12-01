@@ -32,7 +32,7 @@ import pandas as pd
 import numpy as np
 import duckdb
 import geopandas as gpd
-from shapely import wkt
+from shapely import wkt, wkb
 from shapely.geometry import box, Point, Polygon, MultiPolygon
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -59,6 +59,9 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.getcwd()), '.env'))
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 plt.style.use('seaborn-v0_8-darkgrid')
+
+# track total notebook execution time after imports 
+nb_start_time = time.time()
 
 # %% [markdown]
 # ---
@@ -312,8 +315,8 @@ print(f"Using counties sampled from state {gdf_state_bounds.iloc[rand_state_idx]
 sample_county_bounds = county_bounds_gdf[county_bounds_gdf['STATEFP'] == sample_state_fips].sample(frac=county_sample_pct, random_state=42)
 # plot state polygon and sampled counties within the state geometry
 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-# plot state boundary
-gpd.GeoSeries([sample_state_bounds]).plot(ax=ax, color='lightgrey', edgecolor='black', alpha=0.5)
+# plot state geometry as light grey background
+gpd.GeoSeries([gdf_state_bounds.iloc[rand_state_idx]['geometry']]).plot(ax=ax, color='lightgrey', edgecolor='black', alpha=0.5)
 # plot sampled counties; place legend outside the plot and at bottom
 sample_county_bounds.plot(ax=ax, column='NAME', cmap='tab20', edgecolor='black', alpha=0.7, legend=True, legend_kwds={'loc': 'lower left', 'bbox_to_anchor': (1.0, 0)})
 ax.set_title(f"Sampled {county_sample_pct * 100:.0f}% of Counties in {gdf_state_bounds.iloc[rand_state_idx]['NAME']} for Visualization")
@@ -561,63 +564,72 @@ print("✅ All geometries are valid.")
 # We are interested in: `country`, `dependency`, `region`, `county`, `locality`.
 
 # %%
-# Format for SQL query (e.g., 'US', 'PR')
-country_list_sql = ", ".join([f"'{c}'" for c in unique_countries])
-
-# 2. Define Overture S3 Path (Public Bucket)
-# We use the 'divisions' theme and 'division_area' type
-OVERTURE_S3_PATH = "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=divisions/type=division_area/*"
-
-# 3. DuckDB Query
-print("\n🦆 Querying Overture Maps via DuckDB...")
-
-# We use an in-memory connection for this fetch to avoid locking the file DB
-con_mem = duckdb.connect(':memory:')
-con_mem.execute("INSTALL spatial; LOAD spatial;")
-con_mem.execute("INSTALL httpfs; LOAD httpfs;")
-con_mem.execute("SET s3_region='us-west-2';") # Overture bucket region
-# set s3 url style
-con_mem.execute("SET s3_url_style='path';")
-
-# Note: We use ST_AsText(geometry) to ensure we get WKT strings, avoiding type errors with binary WKB
-query = f"""
-    SELECT 
-        id as division_id,
-        subtype,
-        country,
-        region,
-        names.primary as name,
-        ST_AsText(geometry) as geometry
-    FROM read_parquet('{OVERTURE_S3_PATH}')
-    WHERE country IN ({country_list_sql})
-    AND subtype IN ('country', 'dependency', 'region', 'county', 'locality')
-"""
-
-t1 = time.time()
-divisions_df = con_mem.execute(query).df()
-t2 = time.time()
-
-print(f"✅ Fetched {len(divisions_df):,} division features in {t2 - t1:.2f}s")
-
-# Convert to GeoDataFrame
-if not divisions_df.empty:
-    # Geometry is already WKT string from DuckDB
-    divisions_df['geometry'] = divisions_df['geometry'].apply(wkt.loads)
-    divisions_gdf = gpd.GeoDataFrame(divisions_df, geometry='geometry', crs='EPSG:4326')
-    
-    print("\n📊 Divisions by Subtype:")
-    print(divisions_gdf['subtype'].value_counts())
-    
-    display(divisions_gdf.head(3))
-else:
-    print("⚠️ No divisions found.")
+# for now stopping before spatial join as it's easy to reach OOM errors; need to validate this can run in workstation and how much RAM is needed
+skip_overture = os.getenv('SKIP_OVERTURE_DIVISIONS', 'true').lower() == 'true'
+skip_export = os.getenv('SKIP_PARQUET_EXPORT', 'false').lower() == 'false'
+# raise SystemExit("🛑 Ending Notebook Execution Here.")
 
 # %%
-# describe divisions table, estimate memory usage, and sample/visualize a shapely geometry
-divisions_gdf.describe()
-print(f"\n📊 Dataset Overview:")
-print(f"   Shape: {divisions_gdf.shape}")
-print(f"   Memory: {divisions_gdf.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
+if not skip_overture:
+
+    # Format for SQL query (e.g., 'US', 'PR')
+    country_list_sql = ", ".join([f"'{c}'" for c in unique_countries])
+
+    # 2. Define Overture S3 Path (Public Bucket)
+    # We use the 'divisions' theme and 'division_area' type
+    OVERTURE_S3_PATH = "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=divisions/type=division_area/*"
+
+    # 3. DuckDB Query
+    print("\n🦆 Querying Overture Maps via DuckDB...")
+
+    # We use an in-memory connection for this fetch to avoid locking the file DB
+    con_mem = duckdb.connect(':memory:')
+    con_mem.execute("INSTALL spatial; LOAD spatial;")
+    con_mem.execute("INSTALL httpfs; LOAD httpfs;")
+    con_mem.execute("SET s3_region='us-west-2';") # Overture bucket region
+    # set s3 url style
+    con_mem.execute("SET s3_url_style='path';")
+
+    # Note: We use ST_AsText(geometry) to ensure we get WKT strings, avoiding type errors with binary WKB
+    query = f"""
+        SELECT 
+            id as division_id,
+            subtype,
+            country,
+            region,
+            names.primary as name,
+            ST_AsText(geometry) as geometry
+        FROM read_parquet('{OVERTURE_S3_PATH}')
+        WHERE country IN ({country_list_sql})
+        AND subtype IN ('country', 'dependency', 'region', 'county', 'locality')
+    """
+
+    t1 = time.time()
+    divisions_df = con_mem.execute(query).df()
+    t2 = time.time()
+
+    print(f"✅ Fetched {len(divisions_df):,} division features in {t2 - t1:.2f}s")
+
+    # Convert to GeoDataFrame
+    if not divisions_df.empty:
+        # Geometry is already WKT string from DuckDB
+        divisions_df['geometry'] = divisions_df['geometry'].apply(wkt.loads)
+        divisions_gdf = gpd.GeoDataFrame(divisions_df, geometry='geometry', crs='EPSG:4326')
+        
+        print("\n📊 Divisions by Subtype:")
+        print(divisions_gdf['subtype'].value_counts())
+        
+        display(divisions_gdf.head(3))
+    else:
+        print("⚠️ No divisions found.")
+
+# %%
+if not skip_overture:
+    # describe divisions table, estimate memory usage, and sample/visualize a shapely geometry
+    divisions_gdf.describe()
+    print(f"\n📊 Dataset Overview:")
+    print(f"   Shape: {divisions_gdf.shape}")
+    print(f"   Memory: {divisions_gdf.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
 
 # %% [markdown]
 # ---
@@ -631,6 +643,7 @@ print(f"   Memory: {divisions_gdf.memory_usage(deep=True).sum() / 1024**2:.1f} M
 # 3. **GeoParquet Exports**: We will also export the divisions to a GeoParquet file, [optimized with spatial sorting (Hilbert curve)](https://medium.com/radiant-earth-insights/using-duckdbs-hilbert-function-with-geop-8ebc9137fb8a).; A
 
 # %%
+# confirm geodataframe geometry type: object/text for WKT, '0' for WKB; geometry dtype for shapely geometriess (not directly supported by duckdb)
 pv_final_gdf.geometry.dtype
 
 # %%
@@ -668,63 +681,80 @@ con.execute("""
 """)
 print("   ✅ Saved `census_enriched_pv_data` with spatial index on geometry.")
 
-# %%
-# for now stopping before spatial join as it's easy to reach OOM errors; need to validate this can run in workstation and how much RAM is needed
-raise SystemExit("🛑 Ending Notebook Execution Here.")
-
 # %% [markdown]
 # ### Save matching Overture Maps divisions to DuckDB with R-Tree index
 
 # %%
 # 1. Save Divisions Data that intersects with our pv_final_gdf labels 
-print("   Saving 'administrative_divisions'...")
-div_save_df = divisions_gdf.copy()
-div_save_df['geometry'] = div_save_df['geometry'].apply(lambda x: x.wkt)
-# Note: DuckDB R-Tree requires GEOMETRY type
-divs_view = "CREATE OR REPLACE VIEW administrative_divisions AS SELECT ST_GeomFromText(geometry) as geometry, * EXCLUDE (geometry) FROM div_save_df"
-con.execute(divs_view)
 
-# 3. Create Spatial Index in DuckDB
-print("   Creating R-Tree index on 'administrative_divisions'...")
-# only materialize as tables divisions that intersect with the census tracts present in our pv_final_gdf
-pv_tract_geoids = pv_final_gdf['TRACT_GEOID'].unique().tolist()
-# only keep census tract geometries in this list
-pv_tract_geoms = tract_bounds_gdf[tract_bounds_gdf['GEOID'].isin(pv_tract_geoids)]
-# convert to WKT for DuckDB processing
-pv_tract_geoms['geometry'] = pv_tract_geoms['geometry'].apply(lambda x: x.wkt)
-con.register("pv_tracts_geoms", pv_tract_geoms)
-# create a table with only divisions that intersect with these tracts
-con.execute("""
-    -- Create a view or table with actual geometry type for indexing
-    CREATE OR REPLACE TABLE admin_div_geom AS 
-    SELECT division_id, subtype, country, region, name, geometry
-    FROM administrative_divisions
-    INNER JOIN (
-        SELECT ST_GeomFromText(geometry) as geometry FROM pv_tract_geoms
-    ) AS tracts
-    ON ST_Intersects(administrative_divisions.geometry, tracts.geometry);
-    
-    -- Create Index
-    CREATE INDEX idx_admin_div_geom ON admin_div_geom USING RTREE (geom);
-""")
-print("   ✅ Spatial index created.")
+if not skip_overture:
+    print("   Saving 'administrative_divisions'...")
+    div_save_df = divisions_gdf.copy()
+    div_save_df['geometry'] = div_save_df['geometry'].apply(lambda x: x.wkt)
+    # Note: DuckDB R-Tree requires GEOMETRY type
+    divs_view = "CREATE OR REPLACE VIEW administrative_divisions AS SELECT ST_GeomFromText(geometry) as geometry, * EXCLUDE (geometry) FROM div_save_df"
+    con.execute(divs_view)
 
+    # 3. Create Spatial Index in DuckDB
+    print("   Creating R-Tree index on 'administrative_divisions'...")
+    # only materialize as tables divisions that intersect with the census tracts present in our pv_final_gdf
+    pv_tract_geoids = pv_final_gdf['TRACT_GEOID'].unique().tolist()
+    # only keep census tract geometries in this list
+    pv_tract_geoms = tract_bounds_gdf[tract_bounds_gdf['GEOID'].isin(pv_tract_geoids)].copy()
+    print(f"   Found {len(pv_tract_geoms):,} unique census tract geometries for spatial indexing.")
+    pv_tract_geoms['geometry'] = pv_tract_geoms['geometry'].apply(lambda x: x.wkt)
+
+# %%
+# pv_final_gdf.geometry.dtype
+
+# %%
+if not skip_overture:
+    print("   Creating 'admin_div_geom' table with divisions intersecting census tracts in our PV dataset...")
+
+    con.register("pv_tracts_geoms", pv_tract_geoms)
+    # create a table with only divisions that intersect with these tracts
+    con.execute("""
+        -- Create a view or table with actual geometry type for indexing
+        CREATE OR REPLACE TABLE admin_div_geom AS 
+            SELECT division_id, subtype, country, region, name, geometry
+            FROM administrative_divisions
+            INNER JOIN (
+                SELECT ST_GeomFromText(geometry) as geom FROM pv_tract_geoms
+            ) AS tracts
+            ON ST_Intersects(administrative_divisions.geometry, tracts.geom);
+        
+        -- Create Index
+        CREATE INDEX idx_admin_div_geom ON admin_div_geom USING RTREE (geometry);
+    """)
+    print("   ✅ Spatial index created for 'admin_div_geom' table.")
+
+# convert back to geometry for total_bounds
+pv_final_gdf['geometry'] = pv_final_gdf['geometry'].apply(wkt.loads)
+
+# %%
 # 4. Export to GeoParquet (Spatially Partitioned/Sorted)
 # We'll export the divisions, sorted by Hilbert curve for performance
-PARQUET_OUT = os.path.join(os.getenv('PARQUET_OUT', 'db/geoparquet/'), 'overture_divisions.parquet')
-os.makedirs(os.path.dirname(PARQUET_OUT), exist_ok=True)
-CURVE_BBOX = ', '.join((f"CAST({p} AS DOUBLE)" for p in PROJECT_AOI))
+    
+if not skip_export:
+    PARQUET_OUT = os.path.join(os.getenv('PARQUET_OUT', 'db/geoparquet/'), 'overture_divisions.parquet')
+    os.makedirs(os.path.dirname(PARQUET_OUT), exist_ok=True)
+    # get total bounds AOI formatted as xmin, ymin, xmax, ymax
+    pv_final_gdf_total_bounds = pv_final_gdf.total_bounds
+    print(f"   PV Final GeoDataFrame Total Bounds: {pv_final_gdf_total_bounds}")
+    # use pv_final_gdf total bounds as bbox for hilbert curve sorting
+    CURVE_BBOX = ', '.join((f"CAST({p} AS DOUBLE)" for p in pv_final_gdf_total_bounds))
 
-print(f"   Exporting to GeoParquet: {PARQUET_OUT}")
-# TODO: replace hardcoded bbox with bounds parameter
-con.execute(f"""
-    COPY (
-        SELECT * FROM admin_div_geom
-        ORDER BY ST_Hilbert(geom, ST_EXTENT(ST_MakeEnvelope({CURVE_BBOX})))
-    ) TO '{PARQUET_OUT}' (FORMAT PARQUET, KV_METADATA {{'geometry_column': 'geom', 'bbox': '[-161.0, 17.8, -65.2, 47.8]'}});
+    print(f"   Exporting to GeoParquet: {PARQUET_OUT}")
+    # TODO: replace hardcoded bbox with bounds parameter
+    con.execute(f"""
+        COPY (
+            SELECT * FROM admin_div_geom
+            ORDER BY ST_Hilbert(geometry, ST_EXTENT(ST_MakeEnvelope({CURVE_BBOX})))
+        ) TO '{PARQUET_OUT}' (FORMAT PARQUET);
 
-""")
-print("   ✅ GeoParquet export complete.")
+    """)
+    print("   ✅ GeoParquet export complete.")
+con.close()
 
 # %% [markdown]
 # ---
@@ -800,13 +830,6 @@ print("   ✅ GeoParquet export complete.")
 # total_pv = con.execute("SELECT COUNT(*) FROM enriched_pv_data").fetchone()[0]
 # print(f"   Enriched {count_enriched:,} / {total_pv:,} points with Region info.")
 
-# %% [markdown]
-# ---
-# 
-# ## 💾 Task 7: Save Updated PV Data
-# 
-# Finally, we save the enriched PV dataset back to our main table and export it to GeoParquet.
-
 # %%
 # print("💾 Saving Enriched Data...")
 
@@ -832,5 +855,9 @@ print("   ✅ GeoParquet export complete.")
 # con.close()
 # print("\n🎉 Notebook complete!")
 # ```
+
+# %%
+nb_end_time = time.time()
+print(f"\n⏱️ Notebook completed in {nb_end_time - nb_start_time:.2f} seconds.")
 
 

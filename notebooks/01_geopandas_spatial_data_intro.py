@@ -62,11 +62,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import geopandas as gpd
-from shapely import wkt
-from shapely.geometry import Point, Polygon, box
-import geopy
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
+from shapely import wkt, wkb
+from shapely.geometry import Point, box
 from dotenv import load_dotenv
 
 # Load environment variables from .env file in repo root in parent directory
@@ -81,6 +78,10 @@ pd.set_option('display.max_colwidth', 50)
 # Plotting configuration
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
+
+print("✅ Libraries loaded successfully")
+
+nb_start_time = time.time()
 
 # %% [markdown]
 # ---
@@ -111,6 +112,9 @@ sns.set_palette("husl")
 # 3. Convert WKT geometry strings to Shapely objects
 # 4. Create GeoDataFrame with proper CRS
 
+# %% [markdown]
+# 
+
 # %%
 def read_parquet_with_pandas(
     path: str,
@@ -124,14 +128,17 @@ def read_parquet_with_pandas(
     df = pd.read_parquet(path, engine=engine)
     
     # convert to geodataframe and convert WKT to shapely
-    if 'geometry' in df.columns and df['geometry'].dtype == 'object':
+    if 'geometry' in df.columns and df['geometry'].dtype == 'object' and isinstance(df['geometry'].iloc[0], str):
         df['geometry'] = df['geometry'].apply(wkt.loads)
+    elif 'geometry' in df.columns and df['geometry'].dtype == 'object' and isinstance(df['geometry'].iloc[0], bytes):
+        df['geometry'] = df['geometry'].apply(wkb.loads)
+        
 
     gdf = gpd.GeoDataFrame(df, geometry='geometry', crs='EPSG:4326')
     return gdf
 
 # Define Dataset URI and AOI
-DATASET_URI = os.getenv('CONSOLIDATED_PV_DATASET_FILE', 's3://eo-pv-lakehouse/geoparquet/ccom6994_pv_dataset.parquet')
+DATASET_URI = os.getenv('CONSOLIDATED_PV_DATASET_FILE', 'https://eo-pv-elt.work/geoparquet/ccom6994_pv_dataset.parquet')
 
 # Fetch and Filter
 t1 = time.time()
@@ -172,6 +179,7 @@ t1 = time.time()
 # Coordinate based indexer to select by intersection with bounding box: https://geopandas.org/en/stable/docs/user_guide/indexing.html
 # apply indexing via all bboxes and concatenate into single gdf
 pv_df = pd.concat([full_gdf.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]] for bbox in AOI_bboxes])
+
 # keep separate gdf copy for spatial operations and visualizations
 pv_gdf = pv_df.copy()
 # replace geometry column with WKT text to explore geometry data types and conversion below
@@ -235,13 +243,15 @@ print(f"\nQuerying dataset with DuckDB for AOI filtering...")
 # get global extent of our filtered gdf to use as initial bbox filter for parquet scan
 global_bounds = [float(coord) for coord in pv_gdf.total_bounds]  # returns (minx, miny, maxx, maxy)
 print(f"Global bounds of filtered AOI dataset: {global_bounds}")
+
+# use appropriate spatial function depending if consolidated dataset was exported with WKT or WKB geometries
+# geom_cast = 
 casted_coords = ', '.join(f"CAST({coord} AS DOUBLE)" for coord in global_bounds)
 intersect_query = f"""WITH pv_data AS (
     SELECT *
     FROM read_parquet('{DATASET_URI}')
     WHERE ST_Within(ST_GeomFromText(geometry), ST_MakeEnvelope({casted_coords}))
 ) 
-
 """
 # handle multiple bboxes by unioning results
 for idx, AOI_BBOX in enumerate(AOI_bboxes):
@@ -264,6 +274,7 @@ t1 = time.time()
 conn = duckdb.connect(database=':memory:')
 conn.execute("INSTALL spatial; LOAD spatial;")
 conn.execute("INSTALL httpfs; LOAD httpfs;")
+print(f"Fetching PV dataset filtered to our {len(AOI_bboxes)} using the following DuckDB query:\n{intersect_query}\n")
 ddb_df = conn.execute(intersect_query).df()
 conn.close()
 
@@ -568,6 +579,8 @@ print(f"Test Point: San Francisco ({sf_point.x}, {sf_point.y})")
 # Find installations within 0.5 degrees (~55 km)
 sf_buffer = sf_point.buffer(0.5)  # 0.5 degrees radius
 nearby_sf = california_pv[california_pv.geometry.intersects(sf_buffer)].copy()
+# convert to projected CRS for distance calculations
+nearby_sf = nearby_sf.to_crs(epsg=3857)
 
 print(f"\n📍 Solar panels near San Francisco (within ~55km):")
 print(f"   Count: {len(nearby_sf):,}")
@@ -649,8 +662,8 @@ colorbar = plt.colorbar(axes[1, 1].collections[0], ax=axes[1, 1])
 colorbar.set_label('Longitude', fontsize=10)
 
 plt.tight_layout()
-plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_area_distribution.png', 
-            dpi=150, bbox_inches='tight')
+# plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_area_distribution.png', 
+#             dpi=150, bbox_inches='tight')
 print("\n💾 Saved plot: 01_area_distribution.png")
 plt.show()
 
@@ -695,8 +708,8 @@ ax.axhline(AOI_BBOX[1], color='red', linestyle='--', alpha=0.5, linewidth=1)
 ax.axhline(AOI_BBOX[3], color='red', linestyle='--', alpha=0.5, linewidth=1)
 
 plt.tight_layout()
-plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_geographic_distribution.png',
-            dpi=150, bbox_inches='tight')
+# plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_geographic_distribution.png',
+#             dpi=150, bbox_inches='tight')
 print("💾 Saved plot: 01_geographic_distribution.png")
 plt.show()
 
@@ -742,8 +755,8 @@ if len(sample_polys) > 0:
 
     plt.tight_layout()
     # Save to a specific directory to avoid cluttering root
-    plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_polygon_samples.png', dpi=150, bbox_inches='tight')
-    print("💾 Saved plot: 01_polygon_samples.png")
+    # plt.savefig('/Volumes/Expanse/repos/ice-mELT_ducklake/notebooks/01_polygon_samples.png', dpi=150, bbox_inches='tight')
+    # print("💾 Saved plot: 01_polygon_samples.png")
     plt.show()
 else:
     print("⚠️ Not enough polygons to visualize.")
@@ -857,22 +870,16 @@ con = duckdb.connect(database=':memory:')
 
 # Install and load spatial extension
 # Note: In some environments, extensions need internet access to install
-try:
-    con.execute("INSTALL spatial; LOAD spatial;")
-    print("   ✅ DuckDB spatial extension loaded")
-    # Try to load h3 extension (needed for h3_latlng_to_cell in some versions)
-    try:
-        con.execute("INSTALL h3 FROM community; LOAD h3;")
-        print("   ✅ DuckDB h3 extension loaded")
-    except Exception as e:
-        print(f"   ℹ️  Could not load h3 from community (might be built-in or offline): {e}")
-except Exception as e:
-    print(f"   ⚠️  Could not load spatial extension: {e}")
+con.execute("INSTALL spatial; LOAD spatial;")
+print("   ✅ DuckDB spatial extension loaded")
+# load h3 extension (needed for h3_latlng_to_cell)
+con.execute("INSTALL h3 FROM community; LOAD h3;")
+print("   ✅ DuckDB h3 extension loaded")
 
 # Register our dataframe
 # Convert geometry to WKT for DuckDB compatibility
 pv_duck_prep = pv_gdf.copy()
-pv_duck_prep['geometry'] = pv_duck_prep.geometry.apply(lambda x: x.wkt)
+pv_duck_prep['geometry'] = pv_duck_prep.geometry.apply(lambda geom: geom.wkb)
 con.register('pv_data', pv_duck_prep)
 
 # %%
@@ -880,6 +887,7 @@ con.register('pv_data', pv_duck_prep)
 # We'll use H3 Resolution 15 (very fine grain) to approximate "same location"
 # We use the existing h3_index_8 to optimize if needed, but here we calculate fresh high-res indices
 
+# make sure geometry is fetched as WKT to avoid WKB byte parsing issues
 query = """
 WITH with_h3 AS (
     SELECT
@@ -890,7 +898,7 @@ WITH with_h3 AS (
     FROM pv_data
 ),
 deduplicated AS (
-    SELECT *
+    SELECT ST_AsText(ST_GeomFromWKB(geometry)) as geometry, * EXCLUDE(geometry)
     FROM with_h3
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY h3_highres
@@ -905,6 +913,10 @@ try:
     start_time = datetime.now()
     pv_duck_dedup = con.execute(query).df()
     end_time = datetime.now()
+    # load geometry from WKB
+    pv_duck_dedup['geometry'] = pv_duck_dedup['geometry'].apply(wkt.loads)
+    # convert back to geodataframe
+    pv_duck_dedup = gpd.GeoDataFrame(pv_duck_dedup, geometry='geometry', crs='EPSG:4326')
 
     print(f"   ✅ Done in {(end_time - start_time).total_seconds():.2f}s")
     print(f"   Count after DuckDB/H3 deduplication: {len(pv_duck_dedup):,}")
@@ -915,6 +927,9 @@ except Exception as e:
     print("   (Check if H3 functions are available in this DuckDB version)")
     pv_duck_dedup = pv_gdf_dedup # Fallback
     DUCKDB_SUCCESS = False
+
+# %%
+pv_duck_dedup.geometry.dtype
 
 # %% [markdown]
 # ### 7.3 Comparison
@@ -948,14 +963,16 @@ if DUCKDB_SUCCESS:
 # %%
 print("💾 Saving to Persistent DuckDB\n")
 
+db_path = os.getenv('PROJECT_DB', '../db/pv_project.ddb')
 # Ensure db directory exists
-os.makedirs('db', exist_ok=True)
-
-db_path = 'db/pv_project.ddb'
+# os.makedirs(db_path, exist_ok=True)
 print(f"   Database: {db_path}")
 
 # Connect to persistent DB
 con_persistent = duckdb.connect(db_path)
+# install spatial and httpfs extensions 
+con_persistent.execute("INSTALL spatial; LOAD spatial;")
+con_persistent.execute("INSTALL httpfs; LOAD httpfs;")
 
 # Write the deduplicated dataframe to a table
 # We prefer the DuckDB result if available, else GeoPandas result
@@ -963,16 +980,25 @@ final_df = pv_duck_dedup if DUCKDB_SUCCESS else pv_gdf_dedup
 
 try:
     # Convert geometry to WKT for DuckDB storage (if it's not already strings)
-    final_df_storage = final_df.copy()
-    # Check if geometry column exists and needs conversion
-    if 'geometry' in final_df_storage.columns:
-        # Check first element to see if it's a shapely object
-        first_geom = final_df_storage['geometry'].iloc[0] if len(final_df_storage) > 0 else None
-        if first_geom and not isinstance(first_geom, str):
-             final_df_storage['geometry'] = final_df_storage['geometry'].apply(lambda x: x.wkt if hasattr(x, 'wkt') else str(x))
+    final_df_storage = final_df
+    # drop any invalid geometries before saving
+    og_len = len(final_df_storage)
+    final_df_storage = final_df_storage[final_df_storage.is_valid].copy()
+    print(f"   Dropped {og_len - len(final_df_storage):,} invalid geometries before saving.")
+
+    # make sure geometry is either WKT or WKB for conversion to duckdb Geometry type
+    if str(final_df_storage['geometry'].dtype) == 'geometry':
+        final_df_storage['geometry'] = final_df_storage['geometry'].apply(lambda geom: geom.wkb)
     
-    con_persistent.execute("CREATE OR REPLACE TABLE processed_pv_data AS SELECT * FROM final_df_storage")
+    # process reading WKB/WKT geometry into Geometry data type for duckdb
+    # save as WKT for compatibility and easier retrieval wi
+    con_persistent.execute("""
+        CREATE OR REPLACE TABLE processed_pv_data AS
+            SELECT ST_GeomFromWKB(geometry) as geometry, * EXCLUDE (geometry) FROM final_df_storage
+        """)
     print("   ✅ Data saved to table 'processed_pv_data'")
+    # convert geometry back to avoid "Geometry column does not contain geometry" warning
+    final_df_storage['geometry'] = final_df_storage['geometry'].apply(wkb.loads)
     
     # Verify
     count = con_persistent.execute("SELECT count(*) FROM processed_pv_data").fetchone()[0]
@@ -983,6 +1009,10 @@ except Exception as e:
 
 con_persistent.close()
 con.close()
+
+# %%
+nb_end_time = time.time()
+print(f"\n⏱️ Notebook completed in {nb_end_time - nb_start_time:.2f} seconds.")
 
 # %% [markdown]
 # ---

@@ -40,7 +40,7 @@
 # - **NLCD** (National Land Cover Database) - 30m resolution, USA
 # - **ESA WorldCover** - 10m resolution, global
 # - **Copernicus CORINE** - 100m resolution, Europe
-# - **Overture Maps** - Vector-based, derived from OpenStreetMap and other sources
+# - **Overture Maps** - Vector-based, [derived from ESA's 2020 WorldCover](https://docs.overturemaps.org/blog/2024/05/16/land-cover/) that uses Sentinel-2 Imagery
 # 
 # ---
 # 
@@ -86,12 +86,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import duckdb
 import pandas as pd
 import geopandas as gpd
-from shapely import wkt
+from shapely import wkt, wkb
 import matplotlib.pyplot as plt
 
 # OvertureMaestro for Overture Maps data fetching
 import overturemaestro as om
-from overturemaestro.advanced_functions import get_all_possible_column_names
+from overturemaestro.advanced_functions.wide_form import _get_all_possible_column_names
 
 # Census geometry reader
 import censusdis.maps as cem
@@ -117,23 +117,6 @@ print(f"✅ Latest Overture release: {om.get_newest_release_version()}")
 # ## ⚙️ Configuration
 # 
 # Adjust these settings based on your hardware and processing needs.
-# 
-# **Recommended settings for different hardware:**
-# 
-# | Hardware | MAX_WORKERS | DUCKDB_THREADS | DUCKDB_MEMORY |
-# |----------|-------------|----------------|---------------|
-# | Laptop (4 cores, 16GB) | 4 | 4 | 12GB |
-# | Desktop (8 cores, 32GB) | 6-8 | 8 | 24GB |
-# | Workstation (16 cores, 128GB) | 10-12 | 16 | 100GB |
-# 
-# **Environment Variables:**
-# Create a `.env` file in the project root with these settings:
-# ```
-# MAX_WORKERS=12
-# DUCKDB_THREADS=16
-# DUCKDB_MEMORY_LIMIT=100GB
-# PROJECT_DB=../db/pv_project.ddb
-# ```
 
 # %%
 # === PROCESSING CONFIGURATION ===
@@ -141,21 +124,14 @@ print(f"✅ Latest Overture release: {om.get_newest_release_version()}")
 # Database path (relative to notebooks/ directory)
 DB_PATH = os.getenv('PROJECT_DB', '../db/pv_project.ddb')
 
-# === PARALLEL PROCESSING SETTINGS ===
-# Set based on your hardware: 16 cores = try 10-12 workers
+# Overture Maps parameters
+OVERTURE_RELEASE = os.getenv('OVERTURE_RELEASE', '2025-11-19.0')
+
+
+# Parallel processing settings
+# Set based on your hardware: 16 cores = try 8-12 workers
 # Too many workers can cause memory issues or API throttling
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '8'))
-
-# === DUCKDB PERFORMANCE SETTINGS ===
-# Threads: Set to your physical core count (not hyperthreads)
-DUCKDB_THREADS = int(os.getenv('DUCKDB_THREADS', '8'))
-
-# Memory limit: Set to ~80% of available RAM
-# Examples: '12GB' (laptop), '24GB' (desktop), '100GB' (workstation)
-DUCKDB_MEMORY_LIMIT = os.getenv('DUCKDB_MEMORY_LIMIT', '16GB')
-
-# Enable Parquet metadata cache for faster repeated queries
-DUCKDB_PARQUET_CACHE = os.getenv('DUCKDB_PARQUET_CACHE', 'true').lower() == 'true'
 
 # States to process (None = all states with PV installations)
 # For testing, use a subset: ['CA', 'AZ', 'NV']
@@ -164,12 +140,13 @@ STATES_TO_PROCESS = None
 # Save interval: commit to DB every N counties to avoid data loss
 SAVE_INTERVAL = 10
 
+# DuckDB thread configuration (for multi-threaded operations)
+DUCKDB_THREADS = int(os.getenv('DUCKDB_THREADS', '8'))
+
 print(f"📊 Configuration:")
 print(f"   Database: {DB_PATH}")
 print(f"   Max parallel workers: {MAX_WORKERS}")
 print(f"   DuckDB threads: {DUCKDB_THREADS}")
-print(f"   DuckDB memory limit: {DUCKDB_MEMORY_LIMIT}")
-print(f"   Parquet metadata cache: {DUCKDB_PARQUET_CACHE}")
 print(f"   States filter: {STATES_TO_PROCESS or 'All'}")
 
 # %% [markdown]
@@ -182,29 +159,8 @@ print(f"   States filter: {STATES_TO_PROCESS or 'All'}")
 print(f"📂 Connecting to database: {DB_PATH}")
 
 con = duckdb.connect(DB_PATH, read_only=True)
-
-# === DUCKDB PERFORMANCE CONFIGURATION ===
-# Install and load spatial extension
 con.execute("INSTALL spatial; LOAD spatial;")
-
-# Set thread count for parallel query execution
-con.execute(f"SET threads = {DUCKDB_THREADS};")
-
-# Set memory limit (important for large spatial operations)
-con.execute(f"SET memory_limit = '{DUCKDB_MEMORY_LIMIT}';")
-
-# Enable Parquet metadata cache for faster repeated access to Overture files
-if DUCKDB_PARQUET_CACHE:
-    con.execute("SET parquet_metadata_cache = true;")
-    con.execute("SET enable_http_metadata_cache = true;")
-    
-# Optimize for our workload
-con.execute("SET enable_progress_bar = true;")
-
-print(f"✅ DuckDB configured:")
-print(f"   Threads: {DUCKDB_THREADS}")
-print(f"   Memory limit: {DUCKDB_MEMORY_LIMIT}")
-print(f"   Parquet cache: {DUCKDB_PARQUET_CACHE}")
+con.execute(f"SET threads={DUCKDB_THREADS};")
 
 # List available tables
 tables = con.execute("SHOW TABLES").fetchall()
@@ -219,7 +175,7 @@ for t in tables:
 # %%
 # Load the census-enriched PV data
 print("\n📥 Loading census_enriched_pv_data...")
-pv_df = con.execute("SELECT * FROM census_enriched_pv_data").df()
+pv_df = con.execute("SELECT ST_AsText(geometry) as geometry, * EXCLUDE (geometry) FROM census_enriched_pv_data").df()
 pv_df['geometry'] = pv_df['geometry'].apply(wkt.loads)
 pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')
 
@@ -228,6 +184,9 @@ print(f"   States: {pv_gdf['STATE_ABBR'].nunique()}")
 print(f"   Counties: {pv_gdf['COUNTY_GEOID'].nunique()}")
 
 con.close()
+
+# %%
+pv_gdf.geometry.dtype
 
 # %% [markdown]
 # ## 🗺️ Task 2: Get County Geometries
@@ -268,10 +227,101 @@ print(f"✅ Filtered to {len(pv_county_bounds):,} counties with PV installations
 
 # %%
 print("🌲 Available Land Cover subtypes in Overture Maps:")
-land_cover_cols = get_all_possible_column_names(theme="base", type="land_cover")
-for col in land_cover_cols:
-    subtype = col.split('|')[-1]
-    print(f"   • {subtype}")
+land_cover_df = _get_all_possible_column_names(theme="base", type="land_cover", release_version=OVERTURE_RELEASE, hierarchy_columns=['subtype'])
+# display all land cover subtypes from fetched df
+land_cover_df.head()
+
+# %%
+def fetch_land_cover_for_county(args):
+    """
+    Fetch land cover data for a single county and find dominant land cover for PVs.
+    args: (county_row, pv_gdf_county)
+    Returns tuple: (county_geoid, state_fips, dataframe or None, error or None)
+    
+    Returns a DataFrame with columns:
+    - pv_unified_id: PV installation identifier
+    - lc_id: Overture Land Cover feature ID
+    - lc_subtype: Land cover type (crop, forest, urban, etc.)
+    """
+    county_row, pv_gdf_county = args
+    geoid = county_row['GEOID']
+    state_fips = county_row['STATEFP']
+    geom = county_row.geometry
+    
+    try:
+        # Fetch Land Cover (no geometry needed, just IDs and attributes)
+        lc_gdf = om.convert_geometry_to_geodataframe(
+            theme="base",
+            type="land_cover",
+            geometry_filter=geom,
+            columns_to_download=["id", "subtype", "geometry"],  # Need geometry for intersection calc
+        )
+        
+        if lc_gdf is None or len(lc_gdf) == 0:
+            return (geoid, state_fips, None, None)
+
+        # Ensure CRS matches (Overture is EPSG:4326)
+        if lc_gdf.crs != pv_gdf_county.crs:
+            lc_gdf = lc_gdf.to_crs(pv_gdf_county.crs)
+
+        # Spatial Join to find intersections
+        joined = gpd.sjoin(pv_gdf_county, lc_gdf, how='left', predicate='intersects')
+        
+        # Filter out non-matches
+        joined = joined.dropna(subset=['index_right'])
+        
+        if len(joined) == 0:
+             return (geoid, state_fips, None, None)
+
+        # Calculate intersection area for each match to find the dominant land cover
+        final_rows = []
+        
+        # Identify the ID column
+        id_col = 'unified_id' if 'unified_id' in pv_gdf_county.columns else pv_gdf_county.index.name or 'index'
+        
+        for pv_idx, pv_row in pv_gdf_county.iterrows():
+            # Get PV ID
+            pv_id = pv_row[id_col] if id_col in pv_row else pv_idx
+            
+            # Get potential matches from sjoin result
+            if pv_idx not in joined.index:
+                continue
+                
+            matches = joined.loc[[pv_idx]]
+            
+            best_lc_id = None
+            best_lc_subtype = None
+            max_area = -1.0
+            pv_geom = pv_row.geometry
+            
+            for _, match in matches.iterrows():
+                lc_idx = match['index_right']
+                lc_row = lc_gdf.loc[lc_idx]
+                lc_geom = lc_row.geometry
+                
+                # Calculate intersection area
+                intersection = pv_geom.intersection(lc_geom)
+                area = intersection.area
+                
+                if area > max_area:
+                    max_area = area
+                    best_lc_id = lc_row['id']
+                    best_lc_subtype = lc_row['subtype']
+            
+            if best_lc_id is not None:
+                final_rows.append({
+                    'pv_unified_id': str(pv_id),
+                    'lc_id': best_lc_id,
+                    'lc_subtype': best_lc_subtype
+                })
+        
+        if len(final_rows) > 0:
+            return (geoid, state_fips, pd.DataFrame(final_rows), None)
+        else:
+            return (geoid, state_fips, None, None)
+            
+    except Exception as e:
+        return (geoid, state_fips, None, str(e))
 
 # %% [markdown]
 # ## 🧪 Task 4: Test with a Single County
@@ -299,17 +349,19 @@ print(f"   Bounds: {test_geom.bounds}")
 print(f"\n🌲 Fetching Land Cover for {test_name} County...")
 
 t1 = time.time()
-test_lc = om.convert_geometry_to_geodataframe(
-    theme="base",
-    type="land_cover",
-    geometry_filter=test_geom,
-    columns_to_download=["id", "subtype", "geometry"],
-)
+# Prepare args
+test_pv_subset = pv_gdf[pv_gdf['COUNTY_GEOID'] == test_geoid]
+test_args = (test_county, test_pv_subset)
+
+_, _, test_result, test_error = fetch_land_cover_for_county(test_args)
 t2 = time.time()
 
-print(f"✅ Fetched {len(test_lc):,} land cover features in {t2-t1:.1f}s")
-print(f"\n📊 Land cover distribution:")
-print(test_lc['subtype'].value_counts())
+if test_result is not None:
+    print(f"✅ Fetched {len(test_result):,} PV-Land Cover matches in {t2-t1:.1f}s")
+    print(f"\n📊 Land cover distribution:")
+    print(test_result['lc_subtype'].value_counts())
+else:
+    print(f"⚠️ No data found or error: {test_error}")
 
 # %% [markdown]
 # ## ⚡ Task 5: Parallel Batch Processing
@@ -328,36 +380,6 @@ print(test_lc['subtype'].value_counts())
 # - We batch-save to DuckDB to limit memory growth
 
 # %%
-def fetch_land_cover_for_county(county_row):
-    """
-    Fetch land cover data for a single county.
-    Returns tuple: (county_geoid, state_fips, geodataframe or None, error or None)
-    """
-    geoid = county_row['GEOID']
-    state_fips = county_row['STATEFP']
-    geom = county_row.geometry
-    
-    try:
-        lc_gdf = om.convert_geometry_to_geodataframe(
-            theme="base",
-            type="land_cover",
-            geometry_filter=geom,
-            columns_to_download=["id", "subtype", "geometry"],
-        )
-        
-        if len(lc_gdf) > 0:
-            lc_gdf = lc_gdf.reset_index()  # id becomes a column
-            lc_gdf['county_geoid'] = geoid
-            lc_gdf['state_fips'] = state_fips
-            lc_gdf['geometry'] = lc_gdf['geometry'].apply(lambda g: g.wkt)
-            return (geoid, state_fips, lc_gdf, None)
-        else:
-            return (geoid, state_fips, None, None)
-            
-    except Exception as e:
-        return (geoid, state_fips, None, str(e))
-
-# %%
 # Filter states if configured
 if STATES_TO_PROCESS:
     counties_to_process = pv_county_bounds[pv_county_bounds['STATEFP'].isin(
@@ -369,7 +391,15 @@ else:
 print(f"🔄 Processing {len(counties_to_process)} counties with {MAX_WORKERS} parallel workers")
 
 # Prepare county data for parallel processing
-county_records = [row for _, row in counties_to_process.iterrows()]
+# We pair each county with its PV installations
+county_records = []
+for _, row in counties_to_process.iterrows():
+    geoid = row['GEOID']
+    pv_subset = pv_gdf[pv_gdf['COUNTY_GEOID'] == geoid]
+    if len(pv_subset) > 0:
+        county_records.append((row, pv_subset))
+
+print(f"🔄 Prepared {len(county_records)} tasks (counties with PV)")
 
 # %%
 # Initialize results storage
@@ -377,32 +407,8 @@ all_results = []
 errors = []
 processed_count = 0
 
-# Open DB connection for writing with optimized settings
-con = duckdb.connect(DB_PATH)
-
-# Apply full performance configuration for batch processing
-con.execute("INSTALL spatial; LOAD spatial;")
-con.execute(f"SET threads = {DUCKDB_THREADS};")
-con.execute(f"SET memory_limit = '{DUCKDB_MEMORY_LIMIT}';")
-if DUCKDB_PARQUET_CACHE:
-    con.execute("SET parquet_metadata_cache = true;")
-
-# Optimize for batch inserts
-con.execute("SET enable_progress_bar = false;")  # Avoid conflicts with tqdm
-
-# Create output table
-con.execute("DROP TABLE IF EXISTS overture_land_cover")
-con.execute("""
-    CREATE TABLE overture_land_cover (
-        id VARCHAR,
-        geometry VARCHAR,
-        subtype VARCHAR,
-        county_geoid VARCHAR,
-        state_fips VARCHAR
-    )
-""")
-
-print("✅ Created overture_land_cover table")
+print("📊 Land cover enrichment will be stored as new columns in census_enriched_pv_data")
+print("   Columns to add: lc_id, lc_subtype")
 
 # %%
 # Parallel processing with progress bar
@@ -412,8 +418,8 @@ t_start = time.time()
 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
     # Submit all tasks
     future_to_county = {
-        executor.submit(fetch_land_cover_for_county, county): county['GEOID']
-        for county in county_records
+        executor.submit(fetch_land_cover_for_county, args): args[0]['GEOID']
+        for args in county_records
     }
     
     # Process completed tasks with progress bar
@@ -430,36 +436,29 @@ with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                     all_results.append(result_df)
                 
                 processed_count += 1
-                
-                # Periodic save to database
-                if len(all_results) >= SAVE_INTERVAL:
-                    batch_df = pd.concat(all_results, ignore_index=True)
-                    con.execute("INSERT INTO overture_land_cover SELECT * FROM batch_df")
-                    pbar.set_postfix({'saved': con.execute("SELECT COUNT(*) FROM overture_land_cover").fetchone()[0]})
-                    all_results = []
+                pbar.set_postfix({'matches': sum(len(df) for df in all_results)})
                     
             except Exception as e:
                 errors.append({'county_geoid': geoid, 'error': str(e)})
             
             pbar.update(1)
 
-# Save remaining results
+# Consolidate all land cover matches
 if all_results:
-    batch_df = pd.concat(all_results, ignore_index=True)
-    con.execute("INSERT INTO overture_land_cover SELECT * FROM batch_df")
+    lc_enrichment_df = pd.concat(all_results, ignore_index=True)
+    print(f"\n💾 Collected {len(lc_enrichment_df):,} PV-Land Cover matches")
+else:
+    lc_enrichment_df = pd.DataFrame(columns=['pv_unified_id', 'lc_id', 'lc_subtype'])
+    print(f"\n⚠️ No land cover matches found")
 
 t_end = time.time()
 
 # %%
 # Processing summary
-total_features = con.execute("SELECT COUNT(*) FROM overture_land_cover").fetchone()[0]
-unique_counties = con.execute("SELECT COUNT(DISTINCT county_geoid) FROM overture_land_cover").fetchone()[0]
-
 print(f"\n✅ Parallel processing complete!")
 print(f"   Total time: {(t_end - t_start)/60:.1f} minutes")
 print(f"   Counties processed: {processed_count}")
-print(f"   Counties with data: {unique_counties}")
-print(f"   Total features: {total_features:,}")
+print(f"   PV installations matched: {len(lc_enrichment_df):,}")
 print(f"   Errors: {len(errors)}")
 
 if errors:
@@ -468,58 +467,73 @@ if errors:
         print(f"   {e['county_geoid']}: {e['error'][:50]}...")
 
 # %% [markdown]
-# ## 📊 Task 6: Data Summary and Verification
+# ## 📊 Task 6: Enrich PV Dataset with Land Cover Data
 
 # %%
-print("📊 Land Cover Summary by Subtype:")
-summary = con.execute("""
-    SELECT 
-        subtype, 
-        COUNT(*) as feature_count,
-        COUNT(DISTINCT county_geoid) as county_count
-    FROM overture_land_cover 
-    GROUP BY subtype 
-    ORDER BY feature_count DESC
-""").df()
-print(summary.to_string(index=False))
+print("\n🔗 Merging land cover attributes into PV dataset...")
 
-# %%
-print("\n📊 Top 10 Counties by Feature Count:")
-top_counties = con.execute("""
-    SELECT 
-        county_geoid,
-        state_fips,
-        COUNT(*) as feature_count
-    FROM overture_land_cover 
-    GROUP BY county_geoid, state_fips
-    ORDER BY feature_count DESC
-    LIMIT 10
-""").df()
-print(top_counties.to_string(index=False))
+# Open DB connection
+con = duckdb.connect(DB_PATH)
+con.execute("INSTALL spatial; LOAD spatial;")
+con.execute(f"SET threads={DUCKDB_THREADS};")
+
+# Load existing PV data
+pv_data = con.execute("SELECT * FROM census_enriched_pv_data").df()
+print(f"   Loaded {len(pv_data):,} PV installations from database")
+
+# Merge land cover data
+pv_enriched = pv_data.merge(
+    lc_enrichment_df,
+    left_on='unified_id',
+    right_on='pv_unified_id',
+    how='left'
+)
+
+# Drop the redundant pv_unified_id column
+if 'pv_unified_id' in pv_enriched.columns:
+    pv_enriched = pv_enriched.drop(columns=['pv_unified_id'])
+
+print(f"   ✅ Merged land cover data: {pv_enriched['lc_id'].notna().sum():,} PVs matched")
+
+# Summary statistics
+print("\n📊 Land Cover Summary by Subtype:")
+summary = pv_enriched['lc_subtype'].value_counts()
+print(summary.to_string())
+
+print(f"\n📊 Coverage: {pv_enriched['lc_subtype'].notna().sum() / len(pv_enriched) * 100:.1f}% of PV installations have land cover data")
 
 # %% [markdown]
-# ## 🗄️ Task 7: Create Spatial Index
+# ## 🗄️ Task 7: Save Enriched Dataset
 # 
-# Adding a spatial index improves query performance for spatial operations.
+# Update the database with land cover enriched PV data.
 
 # %%
-print("🗄️ Creating spatial index...")
-try:
-    con.execute("""
-        CREATE INDEX IF NOT EXISTS idx_land_cover_geom 
-        ON overture_land_cover USING RTREE (ST_GeomFromText(geometry))
-    """)
-    print("✅ Spatial index created")
-except Exception as e:
-    print(f"⚠️ Could not create spatial index: {e}")
+print("\n💾 Saving enriched dataset to database...")
 
-# %%
-# Final verification
-final_count = con.execute("SELECT COUNT(*) FROM overture_land_cover").fetchone()[0]
-print(f"\n📈 Final table size: {final_count:,} land cover features")
+# Drop old table and create new one with land cover columns
+con.execute("DROP TABLE IF EXISTS lc_enriched_pv_data")
+
+# Register the enriched dataframe
+con.register('pv_enriched_temp', pv_enriched)
+
+# Create new table with geometry preserved
+con.execute("""
+    CREATE TABLE lc_enriched_pv_data AS
+    SELECT 
+        *,
+        ST_GeomFromText(geometry) as geometry
+    FROM pv_enriched_temp
+""")
+
+final_count = con.execute("SELECT COUNT(*) FROM lc_enriched_pv_data").fetchone()[0]
+print(f"   ✅ Saved {final_count:,} records to lc_enriched_pv_data table")
+
+# Verify land cover columns
+lc_count = con.execute("SELECT COUNT(*) FROM lc_enriched_pv_data WHERE lc_id IS NOT NULL").fetchone()[0]
+print(f"   ✅ {lc_count:,} records have land cover data ({lc_count/final_count*100:.1f}%)")
 
 con.close()
-print("✅ Database connection closed")
+print("\n✅ Database connection closed")
 
 # %% [markdown]
 # ## 📝 Summary
@@ -529,7 +543,19 @@ print("✅ Database connection closed")
 # 1. **Land Cover Fundamentals**: Physical surface classification for Earth observation
 # 2. **Overture Maps Integration**: Using overturemaestro for GeoPandas-friendly access
 # 3. **Parallel Processing**: ThreadPoolExecutor for I/O-bound operations
-# 4. **Efficient Storage**: Batch saves to DuckDB with spatial indexing
+# 4. **Efficient Storage**: Land cover IDs stored as attributes in PV dataset (no separate geometry table)
+# 
+# ### Key Changes for Space Efficiency
+# 
+# - **No separate land cover table**: Land cover IDs and subtypes are stored as columns in the PV dataset
+# - **No geometry duplication**: Only IDs are stored; source geometries can be fetched from Overture when needed
+# - **Optimized joins**: Spatial intersection calculated during fetching, only dominant land cover per PV saved
+# 
+# ### Output Table Schema
+# 
+# The `lc_enriched_pv_data` table extends `census_enriched_pv_data` with:
+# - `lc_id`: Overture Maps Land Cover feature ID
+# - `lc_subtype`: Land cover type (crop, forest, urban, grass, etc.)
 # 
 # ### Performance Notes
 # 
@@ -544,6 +570,4 @@ print("✅ Database connection closed")
 # 
 # ### Next Steps
 # → Continue to **Notebook 05** for Land Use data
-# → Use the data in analysis notebooks for PV-LULC correlation studies
-
-
+# → Use `lc_enriched_pv_data` table for PV-LULC correlation analysis

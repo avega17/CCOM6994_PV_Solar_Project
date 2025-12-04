@@ -216,6 +216,12 @@ pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')
 # #### Visualización de Muestras Aleatorias de Geometrías 
 
 # %%
+# types of geometries in our data
+geom_types = pv_gdf.geometry.geom_type.value_counts()
+print("Tipos de geometrías en nuestros datos:")
+display(geom_types)
+
+# %%
 # Filter for Polygons only to avoid issues with MultiPolygons in simple plot
 poly_subset = pv_gdf[pv_gdf.geometry.type == 'Polygon']
 sample_polys = poly_subset.sample(n=6, random_state=42)
@@ -360,7 +366,9 @@ print(f"   Conteo después de la deduplicación con GeoPandas: {len(pv_gdf_dedup
 # remove invalid geometries before saving
 og_len = len(pv_gdf_dedup)
 pv_gdf_dedup = pv_gdf_dedup[pv_gdf_dedup.is_valid].copy()
-print(f"   Eliminamos {og_len - len(pv_gdf_dedup):,} geometrías inválidas antes de guardar.")
+print(f"   Eliminamos {og_len - len(pv_gdf_dedup):,} geometrías inválidas antes de guardar.\n")
+print(f"Distribución de los datos por fuente después de la limpieza:")
+display(pv_gdf_dedup['dataset_name'].value_counts())
 
 # %% [markdown]
 # ### Ahora almacenamos el conjunto de datos en DuckDB, una base de datos en un solo archivo para el resto del pre-procesamiento fuera de esta libreta
@@ -380,7 +388,7 @@ con_persistent.execute("""
     CREATE OR REPLACE TABLE processed_pv_data AS
         SELECT ST_GeomFromWKB(geometry) as geometry, * EXCLUDE (geometry) FROM pv_gdf_dedup
     """)
-print("   ✅ Data saved to table 'processed_pv_data'")
+print("   ✅ Almacenamos nuestros datos en la tabla 'processed_pv_data' de DuckDB")
 # delete dataframes so far since we'll load the final processed data from duckdb in next steps
 del pv_gdf_dedup
 del pv_gdf
@@ -447,7 +455,6 @@ display(state_counts.head(10))
 
 con.close()
 
-
 # %% [markdown]
 # ## 🌍 What is Land Use-Land Cover (LULC)?
 # 
@@ -495,8 +502,7 @@ con.close()
 # `shrub`, `snow`, `urban`, `wetland`
 
 # %%
-
-!python {local_path}notebooks/04_overture_land_cover_fetch.py
+# !python {local_path}notebooks/04_overture_land_cover_fetch.py
 
 # %%
 # preview enhanced data
@@ -548,21 +554,886 @@ con.close()
 # | `sources` | ARRAY | Data provenance |
 
 # %%
-!python {local_path}notebooks/05_overture_land_use_fetch.py
+# !python {local_path}notebooks/05_overture_land_use_fetch.py
 
 # %%
 # preview what we've added
 
 # %% [markdown]
-# ## 📊 3: Análisis Exploratorio de Datos (EDA), Normalidad, y 
+# ## 📊 3: Análisis Exploratorio de Datos (EDA), Normalidad, y Análisis de Poder Estadístico
+# 
+# En esta sección realizaremos:
+# 1. Descarga de variables del Censo para **todos** los census tracts de EEUU
+# 2. Unión con nuestros datos de instalaciones FV para crear grupos de comparación
+# 3. Análisis exploratorio de las distribuciones de variables
+# 4. Pruebas de normalidad (Shapiro-Wilk, Kolmogorov-Smirnov)
+# 5. Análisis de poder estadístico para determinar tamaños de muestra adecuados
+
+# %%
+# Import additional libraries for statistical analysis
+import scipy.stats as stats
+import statsmodels.stats.power as smp
+import statsmodels.api as sm
+import censusdis.data as ced
+import censusdis.maps as cem
+from censusdis.datasets import ACS5
+from censusdis.states import ALL_STATES_AND_DC, NAMES_FROM_IDS, ABBREVIATIONS_FROM_IDS
 
 # %% [markdown]
-# ## 📚 References & Documentation
+# ### 3.0 Análisis de Normalidad de Variables del Dataset PV
 # 
+# Antes de proceder con el análisis del Censo, verificamos la distribución de las variables 
+# clave en nuestro dataset de instalaciones fotovoltaicas:
+# - `area_m2`: Área de la instalación en metros cuadrados derivada de las geometrías
+# - `source_area_m2`: Área reportada por la fuente original
+# - `capacity_mw`: Capacidad de generación en megavatios
+# 
+# Esta información es útil para entender la naturaleza de nuestros datos y seleccionar 
+# métodos estadísticos apropiados.
+
+# %%
+# Normality analysis for PV installation variables
+print("📊 Análisis de Normalidad: Variables del Dataset PV")
+print("=" * 80)
+
+pv_analysis_vars = ['area_m2', 'source_area_m2', 'capacity_mw']
+
+# First, check data availability
+print("\n📋 Disponibilidad de datos:")
+for var in pv_analysis_vars:
+    if var in pv_census_df.columns:
+        non_null = pv_census_df[var].notna().sum()
+        pct = non_null / len(pv_census_df) * 100
+        print(f"   {var}: {non_null:,} valores válidos ({pct:.1f}%)")
+    else:
+        print(f"   {var}: ⚠️ No disponible en el dataset")
+
+# Q-Q Plots for PV variables
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+for idx, var in enumerate(pv_analysis_vars):
+    ax = axes[idx]
+    if var in pv_census_df.columns:
+        data = pv_census_df[var].dropna()
+        if len(data) > 0:
+            # Use sample for visualization (max 5000 points for Q-Q plot)
+            sample_data = data.sample(n=min(5000, len(data)), random_state=42)
+            stats.probplot(sample_data, dist="norm", plot=ax)
+            ax.set_title(f'Q-Q Plot: {var}\n(n={len(data):,})', fontsize=10)
+        else:
+            ax.text(0.5, 0.5, 'Sin datos', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(f'{var}: Sin datos')
+    else:
+        ax.text(0.5, 0.5, 'Variable no disponible', ha='center', va='center', transform=ax.transAxes)
+        ax.set_title(f'{var}')
+
+plt.tight_layout()
+plt.suptitle('Q-Q Plots: Variables del Dataset PV (vs Distribución Normal)', y=1.02, fontsize=12)
+plt.show()
+
+# %%
+# Statistical normality tests for PV variables
+print("\n📊 Pruebas de Normalidad para Variables PV")
+print("=" * 80)
+print(f"{'Variable':<20} {'N':<12} {'Shapiro-Wilk p':<18} {'K-S p':<18} {'Normal?':<10} {'Recomendación'}")
+print("-" * 100)
+
+pv_normality_results = []
+
+for var in pv_analysis_vars:
+    if var in pv_census_df.columns:
+        data = pv_census_df[var].dropna()
+        n = len(data)
+        
+        if n > 0:
+            # Shapiro-Wilk (sample for large datasets)
+            sample_size = min(5000, n)
+            sample = data.sample(n=sample_size, random_state=42)
+            shapiro_stat, shapiro_p = stats.shapiro(sample)
+            
+            # K-S test (standardize first)
+            standardized = (data - data.mean()) / data.std()
+            ks_stat, ks_p = stats.kstest(standardized, 'norm')
+            
+            is_normal = (shapiro_p > 0.05 and ks_p > 0.05)
+            recommendation = "Paramétrica" if is_normal else "No paramétrica o transformar"
+            
+            pv_normality_results.append({
+                'variable': var,
+                'n': n,
+                'shapiro_p': shapiro_p,
+                'ks_p': ks_p,
+                'is_normal': is_normal
+            })
+            
+            print(f"{var:<20} {n:<12,} p={shapiro_p:.2e}  {'✓' if shapiro_p > 0.05 else '✗'}    p={ks_p:.2e}  {'✓' if ks_p > 0.05 else '✗'}    {'Sí' if is_normal else 'No':<10} {recommendation}")
+        else:
+            print(f"{var:<20} {'N/A':<12} {'Sin datos':<18} {'Sin datos':<18} {'N/A':<10}")
+    else:
+        print(f"{var:<20} {'N/A':<12} {'No disponible':<18} {'No disponible':<18} {'N/A':<10}")
+
+print("-" * 100)
+print("\n💡 Interpretación:")
+print("   - Las variables de área y capacidad típicamente siguen distribuciones log-normales o de cola pesada")
+print("   - Para análisis paramétricos, considerar transformación logarítmica: log(x + 1)")
+print("   - Para comparaciones de grupos, usar pruebas no paramétricas (Mann-Whitney U, Kruskal-Wallis)")
+
+# %%
+# Distribution histograms with log scale option
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+
+for idx, var in enumerate(pv_analysis_vars):
+    # Top row: Original scale
+    ax_orig = axes[0, idx]
+    # Bottom row: Log scale
+    ax_log = axes[1, idx]
+    
+    if var in pv_census_df.columns:
+        data = pv_census_df[var].dropna()
+        data_positive = data[data > 0]  # Log requires positive values
+        
+        if len(data) > 0:
+            # Original scale histogram
+            sns.histplot(data, kde=True, ax=ax_orig, color='steelblue', alpha=0.7)
+            ax_orig.set_title(f'{var}\n(Escala Original)', fontsize=10)
+            ax_orig.axvline(data.mean(), color='red', linestyle='--', label=f'Media: {data.mean():.2e}')
+            ax_orig.axvline(data.median(), color='green', linestyle=':', label=f'Mediana: {data.median():.2e}')
+            ax_orig.legend(fontsize=8)
+            
+            # Log scale histogram (for positive values)
+            if len(data_positive) > 0:
+                log_data = np.log10(data_positive)
+                sns.histplot(log_data, kde=True, ax=ax_log, color='darkgreen', alpha=0.7)
+                ax_log.set_title(f'log10({var})\n(Escala Logarítmica)', fontsize=10)
+                ax_log.set_xlabel(f'log10({var})')
+            else:
+                ax_log.text(0.5, 0.5, 'Sin valores positivos', ha='center', va='center', transform=ax_log.transAxes)
+        else:
+            ax_orig.text(0.5, 0.5, 'Sin datos', ha='center', va='center', transform=ax_orig.transAxes)
+            ax_log.text(0.5, 0.5, 'Sin datos', ha='center', va='center', transform=ax_log.transAxes)
+    else:
+        ax_orig.text(0.5, 0.5, 'No disponible', ha='center', va='center', transform=ax_orig.transAxes)
+        ax_log.text(0.5, 0.5, 'No disponible', ha='center', va='center', transform=ax_log.transAxes)
+
+plt.tight_layout()
+plt.suptitle('Distribución de Variables PV: Escala Original vs Logarítmica', y=1.02, fontsize=12)
+plt.show()
+
+print("\n📊 Estadísticas descriptivas de variables PV:")
+pv_stats = pv_census_df[pv_analysis_vars].describe()
+print(pv_stats.to_string())
+
+# %% [markdown]
+# ### 3.1 Descarga de Variables del Censo para Todos los Census Tracts
+# 
+# Utilizamos la API del Censo de EEUU vía `censusdis` para obtener variables demográficas y socioeconómicas:
+# 
+# | Variable | Código | Descripción |
+# |----------|--------|-------------|
+# | total_population | B01003_001E | Población total |
+# | median_household_income | B19013_001E | Ingreso mediano del hogar |
+# | population_below_poverty | B17001_002E | Población bajo nivel de pobreza |
+# | median_home_value | B25077_001E | Valor mediano de vivienda |
+# | pct_unemployment | DP03_0009PE | % desempleo |
+# | pct_bachelors_or_higher | DP02_0068PE | % con bachillerato o más |
+# | pct_hispanic | DP05_0071PE | % población hispana |
+
+# %%
+# Define census variables to fetch
+CENSUS_YEAR = 2022
+ACS_DATASET = "acs/acs5"
+ACS_PROFILE = "acs/acs5/profile"
+
+# Detailed table variables
+VARS_DETAILED = {
+    "B01003_001E": "total_population",
+    "B19013_001E": "median_household_income",
+    "B17001_002E": "population_below_poverty",
+    "B25077_001E": "median_home_value",
+    "B25001_001E": "total_housing_units",  # For solar adoption rate calculation
+}
+
+# Profile variables (percentages)
+VARS_PROFILE = {
+    "DP03_0009PE": "pct_unemployment",
+    "DP02_0068PE": "pct_bachelors_or_higher",
+    "DP05_0071PE": "pct_hispanic",
+}
+
+# Get unique states from our PV dataset
+pv_states = pv_census_df['STATE_FIPS'].unique().tolist()
+print(f"📊 Estados con instalaciones FV en nuestro dataset: {len(pv_states)}")
+print(f"   {[ABBREVIATIONS_FROM_IDS.get(s, s) for s in pv_states]}")
+
+# NOTE: Some territories (Guam=66, Virgin Islands=78) do not have ACS5 tract data
+# Puerto Rico (72) does have ACS5 tract data
+TERRITORIES_NO_ACS5 = {"66", "78"}  # GU, VI
+
+# %%
+# Fetch census data for all tracts in states with PV installations
+print("📥 Descargando variables del Censo para todos los census tracts...")
+print("   Esto puede tomar unos minutos dependiendo de la conexión...")
+print(f"   ⚠️ Territorios sin datos ACS5: {[ABBREVIATIONS_FROM_IDS.get(s, s) for s in TERRITORIES_NO_ACS5]}\n")
+
+all_tracts_detailed = []
+all_tracts_profile = []
+skipped_territories = []
+
+t1 = time.time()
+for state_fips in pv_states:
+    state_name = NAMES_FROM_IDS.get(state_fips, state_fips)
+    
+    # Skip territories without ACS5 tract data
+    if state_fips in TERRITORIES_NO_ACS5:
+        print(f"   ⏭️  Omitiendo {state_name} (sin datos ACS5 para tracts)")
+        skipped_territories.append(state_fips)
+        continue
+    
+    print(f"   Descargando datos para {state_name}...", end=" ")
+    
+    try:
+        # Fetch detailed variables with geometry
+        df_det = ced.download(
+            ACS_DATASET,
+            CENSUS_YEAR,
+            ["NAME", "GEO_ID"] + list(VARS_DETAILED.keys()),
+            state=state_fips,
+            county="*",
+            tract="*",
+            with_geometry=True
+        )
+        
+        # Fetch profile variables (no geometry needed)
+        df_prof = ced.download(
+            ACS_PROFILE,
+            CENSUS_YEAR,
+            list(VARS_PROFILE.keys()),
+            state=state_fips,
+            county="*",
+            tract="*",
+            with_geometry=False
+        )
+        
+        all_tracts_detailed.append(df_det)
+        all_tracts_profile.append(df_prof)
+        print(f"✓ ({len(df_det):,} tracts)")
+        
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        skipped_territories.append(state_fips)
+
+t2 = time.time()
+print(f"\n✅ Descarga completada en {t2-t1:.1f} segundos.")
+if skipped_territories:
+    print(f"⚠️  Territorios omitidos: {[ABBREVIATIONS_FROM_IDS.get(s, s) for s in skipped_territories]}")
+
+# %%
+# Combine all states into single dataframes
+census_detailed_gdf = gpd.GeoDataFrame(pd.concat(all_tracts_detailed, ignore_index=True))
+census_profile_df = pd.concat(all_tracts_profile, ignore_index=True)
+
+# Merge detailed and profile data
+census_all_tracts = census_detailed_gdf.merge(
+    census_profile_df,
+    on=["STATE", "COUNTY", "TRACT"],
+    how="left"
+)
+
+# Rename columns to human-friendly English names
+rename_map = {**VARS_DETAILED, **VARS_PROFILE}
+census_all_tracts = census_all_tracts.rename(columns=rename_map)
+
+# Create TRACT_GEOID for joining with PV data (STATE + COUNTY + TRACT)
+census_all_tracts['TRACT_GEOID'] = census_all_tracts['STATE'] + census_all_tracts['COUNTY'] + census_all_tracts['TRACT']
+
+print(f"📊 Total de census tracts descargados: {len(census_all_tracts):,}")
+print(f"   Columnas: {list(census_all_tracts.columns)}")
+display(census_all_tracts.head())
+
+# %% [markdown]
+# ### 3.2 Creación del DataFrame de Análisis
+# 
+# Unimos los datos del Censo con nuestro conteo de instalaciones FV por tract para crear:
+# - `n_solar`: Cantidad de instalaciones FV en el tract
+# - `area_km2`: Área del tract en km²
+# - `solar_density`: Densidad de instalaciones (n_solar / area_km2) - útil para análisis espacial
+# - `solar_adoption_rate`: Instalaciones por cada 1,000 unidades de vivienda - **mejor métrica para comparaciones**
+# - `solar_capacity_per_capita`: Capacidad MW por cada 1,000 residentes - mide intensidad de generación
+# - `log_solar_count`: Transformación logarítmica log(n_solar + 1) - ver nota abajo
+# - `has_solar`: Variable binaria (1 si tiene instalaciones, 0 si no)
+# 
+# > **Nota**: `solar_adoption_rate` es preferible a `solar_density` porque normaliza por oportunidad
+# > (unidades de vivienda) en lugar de área, haciéndola comparable entre contextos urbanos y rurales.
+# 
+# ---
+# 
+# #### 📐 Sobre la Transformación Logarítmica (`log_solar_count`)
+# 
+# La transformación `log(n + 1)` (también llamada *log1p*) es una técnica estadística común para:
+# 
+# 1. **Manejar ceros**: A diferencia de `log(n)`, `log(n + 1)` está definida para n=0 (resulta en 0)
+# 
+# 2. **Reducir asimetría (skewness)**: Las distribuciones de conteos suelen tener "cola derecha" 
+#    (muchos valores bajos, pocos valores muy altos). La transformación logarítmica comprime 
+#    los valores altos y expande los bajos, aproximando a una distribución más simétrica.
+# 
+# 3. **Estabilizar varianza**: En datos de conteo, la varianza suele aumentar con la media.
+#    La transformación log estabiliza esta varianza (homocedasticidad). [???]
+# 
+# 4. **Interpretación multiplicativa**: En regresión, coeficientes con log se interpretan como
+#    cambios porcentuales: "un aumento de 1 unidad en X se asocia con un aumento de β% en el conteo"
+# 
+# **Cuándo usarla:**
+# - En regresiones lineales donde la variable dependiente es un conteo
+# - Cuando los residuos muestran heterocedasticidad [?????]
+# - Para visualizaciones donde los valores extremos comprimen el resto
+# 
+# **Referencias:**
+# - [Log Transformation in Statistics](https://en.wikipedia.org/wiki/Data_transformation_(statistics)#Log_transformation)
+# - [When to Use Log Transforms](https://stats.stackexchange.com/questions/18844/when-and-why-should-you-take-the-log-of-a-distribution)
+
+# %%
+# Count solar installations per tract and aggregate capacity
+solar_counts = pv_census_df.groupby('TRACT_GEOID').size().reset_index(name='n_solar')
+
+# Aggregate total capacity per tract (if capacity_mw is available)
+if 'capacity_mw' in pv_census_df.columns:
+    solar_capacity = pv_census_df.groupby('TRACT_GEOID')['capacity_mw'].sum().reset_index(name='total_capacity_mw')
+    solar_counts = solar_counts.merge(solar_capacity, on='TRACT_GEOID', how='left')
+    solar_counts['total_capacity_mw'] = solar_counts['total_capacity_mw'].fillna(0)
+    print(f"📊 Tracts con instalaciones FV: {len(solar_counts):,}")
+    print(f"   Capacidad total agregada: {solar_counts['total_capacity_mw'].sum():,.2f} MW")
+else:
+    solar_counts['total_capacity_mw'] = 0
+    print(f"📊 Tracts con instalaciones FV: {len(solar_counts):,}")
+    print(f"   ⚠️ capacity_mw no disponible - solar_capacity_per_capita será 0")
+
+# Merge with census data (left join to keep all tracts)
+analysis_df = census_all_tracts.merge(
+    solar_counts,
+    on='TRACT_GEOID',
+    how='left'
+)
+
+# Fill NaN for tracts without solar installations
+analysis_df['n_solar'] = analysis_df['n_solar'].fillna(0).astype(int)
+
+# Calculate area in km² using appropriate projection (Albers Equal Area for CONUS)
+# First ensure we have geometry and proper CRS
+analysis_gdf = gpd.GeoDataFrame(analysis_df, geometry='geometry', crs='EPSG:4269')
+analysis_gdf = analysis_gdf.to_crs(epsg=5070)  # NAD83 / Conus Albers for area calculation
+
+# Calculate area; 1km2 = 1,000,000 m2
+analysis_gdf['area_km2'] = analysis_gdf.geometry.area / 1_000_000
+
+# Calculate solar density and binary indicator
+analysis_gdf['solar_density'] = analysis_gdf['n_solar'] / analysis_gdf['area_km2']
+analysis_gdf['has_solar'] = (analysis_gdf['n_solar'] > 0).astype(int)
+
+# Calculate solar adoption rate (installations per 1,000 housing units)
+# This is a better metric than solar_density because it normalizes by opportunity (housing stock)
+# rather than area, making it comparable across urban and rural contexts
+analysis_gdf['solar_adoption_rate'] = np.where(
+    analysis_gdf['total_housing_units'] > 0,
+    (analysis_gdf['n_solar'] / analysis_gdf['total_housing_units']) * 1000,
+    0
+)
+
+# Calculate solar capacity per capita (MW per 1,000 residents)
+# This captures both the quantity AND size of installations
+# Useful for understanding total generation potential relative to population
+if 'total_capacity_mw' in analysis_gdf.columns:
+    analysis_gdf['solar_capacity_per_capita'] = np.where(
+        analysis_gdf['total_population'] > 0,
+        (analysis_gdf['total_capacity_mw'] / analysis_gdf['total_population']) * 1000,
+        0
+    )
+else:
+    analysis_gdf['solar_capacity_per_capita'] = 0
+
+# Log-transformed solar count: log(n + 1)
+# This transformation:
+# - Handles zeros (log(0+1) = 0)
+# - Reduces skewness in count distributions
+# - Stabilizes variance for regression analysis
+# - Enables multiplicative interpretation in models
+analysis_gdf['log_solar_count'] = np.log1p(analysis_gdf['n_solar'])
+
+# Convert back to WGS84 for visualization
+analysis_gdf = analysis_gdf.to_crs(epsg=4326)
+
+print(f"\n📊 DataFrame de Análisis Final:")
+print(f"   Total tracts: {len(analysis_gdf):,}")
+print(f"   Tracts CON instalaciones FV: {analysis_gdf['has_solar'].sum():,}")
+print(f"   Tracts SIN instalaciones FV: {(~analysis_gdf['has_solar'].astype(bool)).sum():,}")
+
+# Show summary statistics for all derived variables
+print("\n📈 Estadísticas de variables derivadas:")
+derived_vars = ['n_solar', 'log_solar_count', 'area_km2', 'solar_density', 'solar_adoption_rate', 'solar_capacity_per_capita']
+derived_stats = analysis_gdf[derived_vars].describe()
+print(derived_stats.to_string())
+
+# Check for potential issues with solar_density (very small values)
+print("\n🔍 Diagnóstico de métricas para tracts CON instalaciones FV:")
+with_solar = analysis_gdf[analysis_gdf['has_solar'] == 1]
+print(f"   solar_density:           {with_solar['solar_density'].min():.2e} to {with_solar['solar_density'].max():.4f} (inst/km²)")
+print(f"   solar_adoption_rate:     {with_solar['solar_adoption_rate'].min():.2f} to {with_solar['solar_adoption_rate'].max():.2f} (per 1,000 housing units)")
+print(f"   solar_capacity_per_capita: {with_solar['solar_capacity_per_capita'].min():.4f} to {with_solar['solar_capacity_per_capita'].max():.4f} (MW per 1,000 pop)")
+print(f"   log_solar_count:         {with_solar['log_solar_count'].min():.4f} to {with_solar['log_solar_count'].max():.4f}")
+print(f"\n   Medianas (tracts con FV):")
+print(f"   - solar_adoption_rate:     {with_solar['solar_adoption_rate'].median():.2f} per 1,000 units")
+print(f"   - solar_capacity_per_capita: {with_solar['solar_capacity_per_capita'].median():.4f} MW per 1,000 pop")
+print(f"   - log_solar_count:         {with_solar['log_solar_count'].median():.4f}")
+
+# Show summary statistics with better formatting
+display(analysis_gdf[['total_population', 'median_household_income', 'population_below_poverty', 
+                       'median_home_value', 'total_housing_units', 'pct_unemployment', 'pct_bachelors_or_higher', 
+                       'pct_hispanic', 'n_solar', 'solar_adoption_rate', 'solar_capacity_per_capita', 'log_solar_count']].describe())
+
+# %%
+# Handle missing values - drop rows with missing census data for analysis
+# Note: Census API returns -666666666 for missing/suppressed data
+CENSUS_MISSING_VALUE = -666666666
+
+analysis_vars = ['total_population', 'median_household_income', 'population_below_poverty',
+                 'median_home_value', 'total_housing_units', 'pct_unemployment', 'pct_bachelors_or_higher', 'pct_hispanic']
+
+print("📊 Valores faltantes en variables del Censo:")
+for var in analysis_vars:
+    missing_count = ((analysis_gdf[var].isna()) | (analysis_gdf[var] == CENSUS_MISSING_VALUE)).sum()
+    pct = missing_count / len(analysis_gdf) * 100
+    print(f"   {var}: {missing_count:,} ({pct:.2f}%)")
+
+# Replace census missing values with NaN
+for var in analysis_vars:
+    analysis_gdf.loc[analysis_gdf[var] == CENSUS_MISSING_VALUE, var] = np.nan
+
+# Create clean analysis dataset (drop rows with any missing values in analysis variables)
+analysis_clean = analysis_gdf.dropna(subset=analysis_vars).copy()
+print(f"\n✅ Dataset limpio para análisis: {len(analysis_clean):,} tracts")
+print(f"   Eliminados por datos faltantes: {len(analysis_gdf) - len(analysis_clean):,}")
+
+# %% [markdown]
+# ### 3.3 Visualización de Distribuciones y Correlaciones
+
+# %%
+# Distribution plots for key variables
+fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+axes = axes.flatten()
+
+for idx, var in enumerate(analysis_vars):
+    ax = axes[idx]
+    data = analysis_clean[var].dropna()
+    
+    sns.histplot(data, kde=True, ax=ax, color='steelblue', alpha=0.7)
+    ax.set_title(f'Distribución: {var}', fontsize=10)
+    ax.set_xlabel('')
+    
+    # Add mean and median lines
+    ax.axvline(data.mean(), color='red', linestyle='--', label=f'Media: {data.mean():.2f}')
+    ax.axvline(data.median(), color='green', linestyle=':', label=f'Mediana: {data.median():.2f}')
+    ax.legend(fontsize=8)
+
+# Remove empty subplot
+axes[-1].axis('off')
+plt.tight_layout()
+plt.suptitle('Distribución de Variables del Censo', y=1.02, fontsize=14)
+plt.show()
+
+# %%
+# Correlation matrix
+plt.figure(figsize=(10, 8))
+corr_vars = analysis_vars + ['n_solar', 'solar_density', 'has_solar']
+corr_matrix = analysis_clean[corr_vars].corr()
+
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, fmt='.2f',
+            square=True, linewidths=0.5)
+plt.title('Matriz de Correlaciones: Variables del Censo e Instalaciones FV')
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### 3.4 Pruebas de Normalidad
+# 
+# Antes de seleccionar las pruebas estadísticas apropiadas, debemos verificar si nuestras variables siguen una distribución normal. Utilizamos:
+# 
+# 1. **Q-Q Plots**: Visualización gráfica
+# 2. **Shapiro-Wilk Test**: Prueba estadística (mejor para n < 5000)
+# 3. **Kolmogorov-Smirnov Test**: Prueba estadística (para muestras grandes)
+# 
+# **Interpretación de p-value:**
+# - p > 0.05: No rechazamos H₀ → Los datos podrían ser normales
+# - p ≤ 0.05: Rechazamos H₀ → Los datos NO son normales
+
+# %%
+# Q-Q Plots for normality assessment
+fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+axes = axes.flatten()
+
+for idx, var in enumerate(analysis_vars):
+    ax = axes[idx]
+    data = analysis_clean[var].dropna()
+    
+    # Use a sample if data is too large for visualization
+    sample_data = data.sample(n=min(1000, len(data)), random_state=42)
+    
+    stats.probplot(sample_data, dist="norm", plot=ax)
+    ax.set_title(f'Q-Q Plot: {var}', fontsize=10)
+
+axes[-1].axis('off')
+plt.tight_layout()
+plt.suptitle('Q-Q Plots para Evaluación de Normalidad', y=1.02, fontsize=14)
+plt.show()
+
+# %%
+# Statistical normality tests
+print("📊 Pruebas de Normalidad para Variables del Censo")
+print("=" * 80)
+print(f"{'Variable':<30} {'Shapiro-Wilk':<20} {'Kolmogorov-Smirnov':<20} {'Normal?'}")
+print("-" * 80)
+
+normality_results = []
+
+for var in analysis_vars:
+    data = analysis_clean[var].dropna()
+    
+    # Shapiro-Wilk test (use sample for large datasets)
+    sample_size = min(5000, len(data))
+    sample = data.sample(n=sample_size, random_state=42)
+    shapiro_stat, shapiro_p = stats.shapiro(sample)
+    
+    # Kolmogorov-Smirnov test
+    # Standardize data for K-S test against standard normal
+    standardized = (data - data.mean()) / data.std()
+    ks_stat, ks_p = stats.kstest(standardized, 'norm')
+    
+    is_normal = "Sí" if (shapiro_p > 0.05 and ks_p > 0.05) else "No"
+    
+    normality_results.append({
+        'variable': var,
+        'shapiro_stat': shapiro_stat,
+        'shapiro_p': shapiro_p,
+        'ks_stat': ks_stat,
+        'ks_p': ks_p,
+        'is_normal': is_normal == "Sí"
+    })
+    
+    print(f"{var:<30} p={shapiro_p:.4f}  {'✓' if shapiro_p > 0.05 else '✗'}     p={ks_p:.4f}  {'✓' if ks_p > 0.05 else '✗'}      {is_normal}")
+
+print("-" * 80)
+print("Nota: ✓ indica p > 0.05 (no se rechaza normalidad), ✗ indica p ≤ 0.05 (se rechaza normalidad)")
+
+normality_df = pd.DataFrame(normality_results)
+
+# %% [markdown]
+# ### 3.5 Análisis de Poder Estadístico
+# 
+# El análisis de poder nos ayuda a determinar si tenemos suficientes observaciones para detectar efectos estadísticamente significativos.
+# 
+# **Conceptos clave:**
+# - **Effect Size (Cohen's d)**: Magnitud del efecto (pequeño=0.2, mediano=0.5, grande=0.8)
+# - **Alpha (α)**: Probabilidad de error Tipo I (falso positivo) - típicamente 0.05
+# - **Power (1-β)**: Probabilidad de detectar un efecto verdadero - típicamente 0.80
+# - **Sample Size (n)**: Número de observaciones necesarias
+
+# %%
+# Power Analysis
+print("📊 Análisis de Poder Estadístico")
+print("=" * 60)
+
+# Get sample sizes for our two groups
+n_with_solar = analysis_clean['has_solar'].sum()
+n_without_solar = len(analysis_clean) - n_with_solar
+print(f"\nTamaños de muestra actuales:")
+print(f"   Tracts CON instalaciones FV (n₁): {n_with_solar:,}")
+print(f"   Tracts SIN instalaciones FV (n₂): {n_without_solar:,}")
+print(f"   Ratio n₂/n₁: {n_without_solar/n_with_solar:.2f}")
+
+# Calculate required sample sizes for different effect sizes
+effect_sizes = [0.2, 0.5, 0.8]
+alpha = 0.05
+power = 0.80
+
+print(f"\n📐 Tamaño de muestra requerido por grupo (α={alpha}, power={power}):")
+print("-" * 60)
+for es in effect_sizes:
+    required_n = smp.tt_ind_solve_power(
+        effect_size=es, 
+        nobs1=None, 
+        alpha=alpha, 
+        power=power, 
+        ratio=1, 
+        alternative='two-sided'
+    )
+    size_label = "pequeño" if es == 0.2 else ("mediano" if es == 0.5 else "grande")
+    meets_req = "✓" if min(n_with_solar, n_without_solar) >= required_n else "✗"
+    print(f"   Effect size {es} ({size_label}): n = {round(required_n):,} por grupo {meets_req}")
+
+# Calculate actual power with our sample sizes
+print(f"\n📈 Poder estadístico con nuestros tamaños de muestra actuales:")
+print("-" * 60)
+for es in effect_sizes:
+    actual_power = smp.tt_ind_solve_power(
+        effect_size=es,
+        nobs1=n_with_solar,
+        alpha=alpha,
+        power=None,
+        ratio=n_without_solar/n_with_solar,
+        alternative='two-sided'
+    )
+    size_label = "pequeño" if es == 0.2 else ("mediano" if es == 0.5 else "grande")
+    print(f"   Effect size {es} ({size_label}): power = {actual_power:.4f} ({actual_power*100:.1f}%)")
+
+# %%
+# Power curves visualization
+fig, ax = plt.subplots(figsize=(10, 6))
+
+effect_sizes_range = np.array([0.2, 0.5, 0.8, 1.0])
+sample_sizes_range = np.arange(10, 500, 10)
+
+power_obj = smp.TTestIndPower()
+power_obj.plot_power(dep_var='nobs', nobs=sample_sizes_range, effect_size=effect_sizes_range, ax=ax)
+
+# Add vertical line for our smallest group
+ax.axvline(x=min(n_with_solar, n_without_solar), color='red', linestyle='--', 
+           label=f'Nuestro n mínimo: {min(n_with_solar, n_without_solar):,}')
+ax.axhline(y=0.8, color='gray', linestyle=':', alpha=0.7, label='Power = 0.80')
+
+ax.set_xlabel("Tamaño de Muestra por Grupo")
+ax.set_ylabel("Poder Estadístico")
+ax.set_title("Curvas de Poder para Diferentes Tamaños de Efecto")
+ax.legend(loc='lower right')
+ax.set_xlim(0, 500)
+plt.tight_layout()
+plt.show()
+
+print("\n💡 Interpretación:")
+print("   Con nuestros tamaños de muestra, tenemos poder estadístico suficiente")
+print("   para detectar efectos pequeños (d=0.2) con alta confiabilidad.")
+
+# %% [markdown]
+# ---
+# 
+# ## 📈 4: Pruebas Estadísticas de Diferencias entre Grupos
+# 
+# Ahora que hemos verificado la normalidad (o falta de ella) de nuestras variables y confirmado que tenemos poder estadístico suficiente, realizamos las pruebas para determinar si existen diferencias significativas entre:
+# 
+# - **Grupo 1**: Census tracts CON instalaciones fotovoltaicas
+# - **Grupo 2**: Census tracts SIN instalaciones fotovoltaicas
+# 
+# ### Selección de Prueba
+# - Si los datos son **normales**: t-test independiente
+# - Si los datos **NO son normales**: Mann-Whitney U (no paramétrica)
+# 
+# Basado en nuestros resultados de normalidad, utilizaremos **Mann-Whitney U** para la mayoría de las variables.
+
+# %%
+# Compare groups: with vs without solar installations
+print("📊 Comparación de Grupos: Tracts con vs sin Instalaciones FV")
+print("=" * 80)
+
+# Split data into two groups
+group_with_solar = analysis_clean[analysis_clean['has_solar'] == 1]
+group_without_solar = analysis_clean[analysis_clean['has_solar'] == 0]
+
+print(f"\nEstadísticas descriptivas por grupo:")
+print("-" * 80)
+
+comparison_results = []
+
+for var in analysis_vars:
+    data_with = group_with_solar[var].dropna()
+    data_without = group_without_solar[var].dropna()
+    
+    # Calculate means and medians
+    mean_with = data_with.mean()
+    mean_without = data_without.mean()
+    median_with = data_with.median()
+    median_without = data_without.median()
+    
+    # Determine which test to use based on normality
+    var_is_normal = normality_df[normality_df['variable'] == var]['is_normal'].values[0]
+    
+    if var_is_normal:
+        # Use independent t-test
+        stat, p_value = stats.ttest_ind(data_with, data_without)
+        test_name = "t-test"
+    else:
+        # Use Mann-Whitney U test
+        stat, p_value = stats.mannwhitneyu(data_with, data_without, alternative='two-sided')
+        test_name = "Mann-Whitney U"
+    
+    # Effect size (Cohen's d)
+    pooled_std = np.sqrt(((len(data_with)-1)*data_with.std()**2 + (len(data_without)-1)*data_without.std()**2) / 
+                         (len(data_with) + len(data_without) - 2))
+    cohens_d = (mean_with - mean_without) / pooled_std if pooled_std > 0 else 0
+    
+    sig = "***" if p_value < 0.001 else ("**" if p_value < 0.01 else ("*" if p_value < 0.05 else ""))
+    
+    comparison_results.append({
+        'variable': var,
+        'mean_with_solar': mean_with,
+        'mean_without_solar': mean_without,
+        'median_with_solar': median_with,
+        'median_without_solar': median_without,
+        'test': test_name,
+        'statistic': stat,
+        'p_value': p_value,
+        'cohens_d': cohens_d,
+        'significant': p_value < 0.05
+    })
+
+# Display results as DataFrame
+results_df = pd.DataFrame(comparison_results)
+print("\n📋 Resultados de las Pruebas Estadísticas:")
+display(results_df[['variable', 'mean_with_solar', 'mean_without_solar', 'test', 'p_value', 'cohens_d', 'significant']])
+
+# %%
+# Visualize group comparisons
+fig, axes = plt.subplots(2, 4, figsize=(16, 10))
+axes = axes.flatten()
+
+for idx, var in enumerate(analysis_vars):
+    ax = axes[idx]
+    
+    # Prepare data for boxplot
+    data_with = group_with_solar[var].dropna()
+    data_without = group_without_solar[var].dropna()
+    
+    # Create boxplot
+    box_data = [data_without, data_with]
+    bp = ax.boxplot(box_data, tick_labels=['Sin FV', 'Con FV'], patch_artist=True)
+    
+    # Color the boxes
+    bp['boxes'][0].set_facecolor('lightcoral')
+    bp['boxes'][1].set_facecolor('lightgreen')
+    
+    # Get p-value for title
+    p_val = results_df[results_df['variable'] == var]['p_value'].values[0]
+    sig_marker = "***" if p_val < 0.001 else ("**" if p_val < 0.01 else ("*" if p_val < 0.05 else "n.s."))
+    
+    ax.set_title(f'{var}\np = {p_val:.4f} {sig_marker}', fontsize=10)
+    ax.set_ylabel('Valor')
+
+axes[-1].axis('off')
+plt.tight_layout()
+plt.suptitle('Comparación de Variables del Censo: Tracts Con vs Sin Instalaciones FV\n(* p<0.05, ** p<0.01, *** p<0.001, n.s. = no significativo)', 
+             y=1.02, fontsize=12)
+plt.show()
+
+# %%
+# Summary of significant differences
+print("\n📊 Resumen de Diferencias Significativas (p < 0.05):")
+print("=" * 60)
+
+sig_results = results_df[results_df['significant']]
+if len(sig_results) > 0:
+    for _, row in sig_results.iterrows():
+        direction = "mayor" if row['mean_with_solar'] > row['mean_without_solar'] else "menor"
+        effect_size = "pequeño" if abs(row['cohens_d']) < 0.5 else ("mediano" if abs(row['cohens_d']) < 0.8 else "grande")
+        print(f"\n   📍 {row['variable']}:")
+        print(f"      - Los tracts CON instalaciones FV tienen un valor {direction}")
+        print(f"      - Media con FV: {row['mean_with_solar']:.2f} vs sin FV: {row['mean_without_solar']:.2f}")
+        print(f"      - Tamaño del efecto (Cohen's d): {row['cohens_d']:.3f} ({effect_size})")
+        print(f"      - p-value: {row['p_value']:E}")
+else:
+    print("   No se encontraron diferencias estadísticamente significativas.")
+
+print("\n💡 Nota: Estas diferencias sugieren patrones en la adopción de energía solar")
+print("   en relación con características socioeconómicas de los census tracts.")
+
+# %% [markdown]
+# ### 4.2 Modelo de Regresión Logística (Opcional)
+# 
+# Complementamos el análisis con un modelo de regresión logística para predecir la presencia de instalaciones FV basándonos en las variables del Censo.
+
+# %%
+import statsmodels.formula.api as smf
+
+# Prepare data for logistic regression (drop any remaining NaN)
+logit_data = analysis_clean[['has_solar'] + analysis_vars].dropna()
+
+# Standardize predictors for better coefficient interpretation
+for var in analysis_vars:
+    logit_data[f'{var}_std'] = (logit_data[var] - logit_data[var].mean()) / logit_data[var].std()
+
+# Build formula with standardized variables
+std_vars = [f'{var}_std' for var in analysis_vars]
+formula = f"has_solar ~ {' + '.join(std_vars)}"
+
+print("📊 Modelo de Regresión Logística")
+print("=" * 60)
+print(f"   Variable dependiente: has_solar (1 = tiene instalaciones FV, 0 = no tiene)")
+print(f"   Variables independientes: {analysis_vars}")
+print(f"   Observaciones: {len(logit_data):,}")
+
+# Fit logistic regression model
+try:
+    model = smf.logit(formula=formula, data=logit_data).fit(disp=0)
+    print(model.summary())
+except Exception as e:
+    print(f"⚠️ Error al ajustar el modelo: {e}")
+    print("   Esto puede ocurrir si hay multicolinealidad o separación perfecta en los datos.")
+
+# %% [markdown]
+# ---
+# 
+# ## 🎯 5: Conclusiones y Próximos Pasos
+# 
+# ### Hallazgos Principales:
+# 
+# 1. **Distribución de datos**: La mayoría de las variables del Censo NO siguen una distribución normal, justificando el uso de pruebas no paramétricas (Mann-Whitney U).
+# 
+# 2. **Poder estadístico**: Con nuestros tamaños de muestra, tenemos poder suficiente para detectar efectos pequeños a grandes.
+# 
+# 3. **Diferencias significativas**: [Se actualizará basado en resultados]
+# 
+# 4. **Métrica de adopción**: `solar_adoption_rate` (instalaciones por 1,000 unidades de vivienda) es una métrica más interpretable que `solar_density` para comparar adopción entre tracts urbanos y rurales.
+# 
+# ### Próximos Pasos:
+# 
+# - [ ] Integrar análisis de Land Cover (LULC) cuando esté disponible
+# - [ ] Análisis temporal de adopción de energía solar
+# - [ ] Modelos predictivos más sofisticados
+# 
+# ### 🔬 Trabajo Futuro: Imputación de `capacity_mw`
+# 
+# La variable `capacity_mw` (capacidad de generación en megavatios) es un excelente candidato para **imputación o derivación** basada en:
+# 
+# 1. **Área del panel (`area_m2`)**: Existe una relación física directa entre área y capacidad
+#    - Regla general: ~150-200 W/m² para paneles cristalinos típicos
+#    - Fórmula aproximada: `capacity_kw ≈ area_m2 * 0.15 a 0.20`
+# 
+# 2. **Ángulo de inclinación del panel**: Si está disponible, mejora significativamente la precisión
+#    - Paneles con inclinación óptima (latitud ± 15°) maximizan generación
+# 
+# 3. **Modelos físicos de energía existentes**:
+#    - **PVWatts** (NREL): Modelo estándar de la industria para estimación de generación
+#    - **SAM** (System Advisor Model): Modelo más detallado que incluye degradación y pérdidas
+#    - Parámetros: radiación solar local, temperatura, eficiencia del panel, orientación
+# 
+# Esta imputación permitiría análisis más completos sobre la capacidad de generación agregada por tract.
+
+# %% [markdown]
+# ## 📚 Referencias y Documentación
+# 
+# ### Censusdis y API del Censo
 # - [censusdis Introduction](https://censusdis.readthedocs.io/en/latest/intro.html)
 # - [Census API Datasets](https://api.census.gov/data/2020.html)
 # - [Exploring Variables](https://censusdis.readthedocs.io/en/latest/nb/Exploring%20Variables.html)
 # - [Data With Geometry](https://censusdis.readthedocs.io/en/latest/nb/Data%20With%20Geometry.html)
+# - [Column Labels (Human-friendly names)](https://github.com/censusdis/censusdis/blob/main/notebooks/Column%20Labels.ipynb)
+# - [Population Density](https://github.com/censusdis/censusdis/blob/main/notebooks/Population%20Density.ipynb)
+# 
+# ### Análisis Estadístico
+# - [SciPy Stats Documentation](https://docs.scipy.org/doc/scipy/reference/stats.html)
+# - [Statsmodels Power Analysis](https://www.statsmodels.org/stable/stats.html#power-and-sample-size-calculations)
+# - [Mann-Whitney U Test](https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test)
+# 
+# ### Visualización
 # - [ipywidgets Widget List](https://ipywidgets.readthedocs.io/en/latest/examples/Widget%20List.html)
+# - [Plotly Express Documentation](https://plotly.com/python/plotly-express/)
+# 
+# 
 
 

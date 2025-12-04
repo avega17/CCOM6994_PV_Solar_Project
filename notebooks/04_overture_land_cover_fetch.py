@@ -249,64 +249,65 @@ def fetch_land_cover_for_county(args):
     geom = county_row.geometry
     
     try:
-        # Fetch Land Cover (no geometry needed, just IDs and attributes)
+        # Fetch Land Cover
         lc_gdf = om.convert_geometry_to_geodataframe(
             theme="base",
             type="land_cover",
             geometry_filter=geom,
-            columns_to_download=["id", "subtype", "geometry"],  # Need geometry for intersection calc
+            columns_to_download=["id", "subtype", "geometry"],
         )
         
         if lc_gdf is None or len(lc_gdf) == 0:
-            return (geoid, state_fips, None, None)
+            return (geoid, state_fips, None, "No land cover data in county")
 
+        # Rename 'id' to 'lc_id' to avoid conflicts with index
+        lc_gdf = lc_gdf.rename(columns={'id': 'lc_id'})
+        
+        # Reset index to ensure clean integer index for spatial join
+        lc_gdf = lc_gdf.reset_index(drop=True)
+        pv_gdf_local = pv_gdf_county.copy().reset_index(drop=True)
+        
         # Ensure CRS matches (Overture is EPSG:4326)
-        if lc_gdf.crs != pv_gdf_county.crs:
-            lc_gdf = lc_gdf.to_crs(pv_gdf_county.crs)
+        if lc_gdf.crs != pv_gdf_local.crs:
+            lc_gdf = lc_gdf.to_crs(pv_gdf_local.crs)
 
         # Spatial Join to find intersections
-        joined = gpd.sjoin(pv_gdf_county, lc_gdf, how='left', predicate='intersects')
-        
-        # Filter out non-matches
-        joined = joined.dropna(subset=['index_right'])
-        
-        if len(joined) == 0:
-             return (geoid, state_fips, None, None)
-
-        # Calculate intersection area for each match to find the dominant land cover
+        # Use overlay with intersection to get actual overlapping geometries
         final_rows = []
         
-        # Identify the ID column
-        id_col = 'unified_id' if 'unified_id' in pv_gdf_county.columns else pv_gdf_county.index.name or 'index'
+        # Identify the ID column from original PV data
+        id_col = 'unified_id' if 'unified_id' in pv_gdf_county.columns else None
         
-        for pv_idx, pv_row in pv_gdf_county.iterrows():
-            # Get PV ID
-            pv_id = pv_row[id_col] if id_col in pv_row else pv_idx
-            
-            # Get potential matches from sjoin result
-            if pv_idx not in joined.index:
+        for pv_idx, pv_row in pv_gdf_local.iterrows():
+            pv_geom = pv_row.geometry
+            if pv_geom is None or pv_geom.is_empty:
                 continue
-                
-            matches = joined.loc[[pv_idx]]
+            
+            # Get PV ID from original data
+            orig_idx = pv_gdf_county.index[pv_idx]
+            if id_col:
+                pv_id = pv_gdf_county.loc[orig_idx, id_col]
+            else:
+                pv_id = orig_idx
             
             best_lc_id = None
             best_lc_subtype = None
-            max_area = -1.0
-            pv_geom = pv_row.geometry
+            max_area = 0.0
             
-            for _, match in matches.iterrows():
-                lc_idx = match['index_right']
-                lc_row = lc_gdf.loc[lc_idx]
+            # Check each land cover feature for intersection
+            for lc_idx, lc_row in lc_gdf.iterrows():
                 lc_geom = lc_row.geometry
-                
-                # Calculate intersection area
-                intersection = pv_geom.intersection(lc_geom)
-                area = intersection.area
-                
-                if area > max_area:
-                    max_area = area
-                    best_lc_id = lc_row['id']
-                    best_lc_subtype = lc_row['subtype']
+                if lc_geom is None or lc_geom.is_empty:
+                    continue
+                    
+                if pv_geom.intersects(lc_geom):
+                    intersection = pv_geom.intersection(lc_geom)
+                    area = intersection.area
+                    
+                    if area > max_area:
+                        max_area = area
+                        best_lc_id = lc_row['lc_id']
+                        best_lc_subtype = lc_row['subtype']
             
             if best_lc_id is not None:
                 final_rows.append({
@@ -318,10 +319,11 @@ def fetch_land_cover_for_county(args):
         if len(final_rows) > 0:
             return (geoid, state_fips, pd.DataFrame(final_rows), None)
         else:
-            return (geoid, state_fips, None, None)
+            return (geoid, state_fips, None, "No PV-LC intersections found")
             
     except Exception as e:
-        return (geoid, state_fips, None, str(e))
+        import traceback
+        return (geoid, state_fips, None, f"{str(e)}: {traceback.format_exc()}")
 
 # %% [markdown]
 # ## 🧪 Task 4: Test with a Single County
@@ -351,6 +353,10 @@ print(f"\n🌲 Fetching Land Cover for {test_name} County...")
 t1 = time.time()
 # Prepare args
 test_pv_subset = pv_gdf[pv_gdf['COUNTY_GEOID'] == test_geoid]
+print(f"   PV subset shape: {test_pv_subset.shape}")
+print(f"   PV subset columns: {list(test_pv_subset.columns)}")
+print(f"   Sample PV geometry type: {test_pv_subset.iloc[0].geometry.geom_type if len(test_pv_subset) > 0 else 'N/A'}")
+
 test_args = (test_county, test_pv_subset)
 
 _, _, test_result, test_error = fetch_land_cover_for_county(test_args)
@@ -361,7 +367,9 @@ if test_result is not None:
     print(f"\n📊 Land cover distribution:")
     print(test_result['lc_subtype'].value_counts())
 else:
-    print(f"⚠️ No data found or error: {test_error}")
+    print(f"⚠️ No matches or error: {test_error}")
+    # Stop here if test fails
+    raise RuntimeError(f"Test failed - fix before running batch processing: {test_error}")
 
 # %% [markdown]
 # ## ⚡ Task 5: Parallel Batch Processing

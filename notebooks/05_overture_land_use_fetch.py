@@ -93,7 +93,11 @@ import matplotlib.pyplot as plt
 
 # OvertureMaestro for Overture Maps data fetching
 import overturemaestro as om
-from overturemaestro.advanced_functions import get_all_possible_column_names
+try:
+    from overturemaestro.advanced_functions import get_all_possible_column_names
+except ImportError:
+    # Fallback for older versions
+    from overturemaestro.advanced_functions.wide_form import _get_all_possible_column_names as get_all_possible_column_names
 
 # Census geometry reader
 import censusdis.maps as cem
@@ -219,8 +223,22 @@ for t in tables:
         print(f"   - {t[0]}: (error reading)")
 
 # %%
-# Load the census-enriched PV data
+# Load the census-enriched PV data (REQUIRED - must run Notebook 02 first)
 print("\n📥 Loading census_enriched_pv_data...")
+
+# Verify the required table exists
+tables = con.execute("SHOW TABLES").fetchall()
+table_names = [t[0] for t in tables]
+
+if 'census_enriched_pv_data' not in table_names:
+    con.close()
+    raise FileNotFoundError(
+        "❌ Required table 'census_enriched_pv_data' not found in database.\n"
+        "   Please run Notebook 02 (02_geocoding_census_geographies.ipynb) first to create this table.\n"
+        f"   Database path: {DB_PATH}\n"
+        f"   Available tables: {table_names}"
+    )
+
 pv_df = con.execute("SELECT * FROM census_enriched_pv_data").df()
 pv_df['geometry'] = pv_df['geometry'].apply(wkt.loads)
 pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')

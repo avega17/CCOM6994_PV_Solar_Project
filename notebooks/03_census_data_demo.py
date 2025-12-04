@@ -52,7 +52,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import duckdb
-from shapely import wkt
+from shapely import wkt, wkb
 from scipy import stats
 
 from dotenv import load_dotenv
@@ -112,13 +112,28 @@ for t in tables:
         print(f"   - {t[0]}: (error reading)")
 
 # %%
+# Load the census-enriched PV data (REQUIRED - must run Notebook 02 first)
+print("\n📥 Loading PV data from census_enriched_pv_data table...")
+
+# Verify the required table exists
+tables = con.execute("SHOW TABLES").fetchall()
+table_names = [t[0] for t in tables]
+
+if 'census_enriched_pv_data' not in table_names:
+    con.close()
+    raise FileNotFoundError(
+        "❌ Required table 'census_enriched_pv_data' not found in database.\n"
+        "   Please run Notebook 02 (02_geocoding_census_geographies.ipynb) first to create this table.\n"
+        f"   Database path: {DB_PATH}\n"
+        f"   Available tables: {table_names}"
+    )
+
 # Load the census-enriched PV data
-print("\n📥 Loading census_enriched_pv_data...")
-pv_df = con.execute("SELECT * FROM census_enriched_pv_data").df()
+pv_df = con.execute("SELECT ST_AsText(geometry) AS geometry, * EXCLUDE geometry FROM census_enriched_pv_data").df()
 pv_df['geometry'] = pv_df['geometry'].apply(wkt.loads)
 pv_gdf = gpd.GeoDataFrame(pv_df, geometry='geometry', crs='EPSG:4326')
 
-print(f"✅ Loaded {len(pv_gdf):,} PV installations")
+print(f"✅ Loaded {len(pv_gdf):,} PV installations with census geography")
 print(f"   States: {pv_gdf['STATE_ABBR'].nunique()}")
 print(f"   Counties: {pv_gdf['COUNTY_GEOID'].nunique()}")
 print(f"   Census Tracts: {pv_gdf['TRACT_GEOID'].nunique()}")
@@ -127,6 +142,17 @@ con.close()
 
 # %%
 # Get unique geographic identifiers from our PV data
+# All required census columns should be present from Notebook 02
+required_cols = ['STATE_FIPS', 'STATE_ABBR', 'COUNTY_GEOID', 'COUNTY_NAME', 'TRACT_GEOID']
+missing_cols = [col for col in required_cols if col not in pv_gdf.columns]
+
+if missing_cols:
+    raise ValueError(
+        f"❌ Required census geography columns missing: {missing_cols}\n"
+        f"   This indicates the census_enriched_pv_data table is incomplete.\n"
+        f"   Please re-run Notebook 02 (02_geocoding_census_geographies.ipynb) to completion."
+    )
+
 pv_counties = pv_gdf[['STATE_FIPS', 'STATE_ABBR', 'COUNTY_GEOID', 'COUNTY_NAME']].drop_duplicates()
 pv_tracts = pv_gdf[['STATE_FIPS', 'COUNTY_GEOID', 'TRACT_GEOID']].drop_duplicates()
 
@@ -151,23 +177,31 @@ display(pv_per_county.nlargest(10, 'pv_count'))
 # ### 2.1 Discover Available Datasets
 # 
 # The Census API provides a catalog of datasets at: 
-# `https://api.census.gov/data/{YEAR}.html`
+# - Dataset list: `https://api.census.gov/data/{YEAR}.html`
+# - Variables for a dataset: `https://api.census.gov/data/{YEAR}/{dataset}/variables.html`
+# 
+# For this analysis, we use pre-selected ACS 5-Year datasets which provide
+# the most comprehensive and reliable socioeconomic data.
 
 # %%
 # Supported years for our analysis
 SUPPORTED_YEARS = [2020, 2021, 2022, 2023]
 
 # Common ACS datasets for socioeconomic analysis
+# These are verified to work with the Census API
 RECOMMENDED_DATASETS = {
     'acs/acs5': 'American Community Survey 5-Year Estimates (most complete)',
     'acs/acs5/profile': 'ACS 5-Year Data Profiles (summary percentages)',
     'acs/acs5/subject': 'ACS 5-Year Subject Tables (topic-focused)',
-    'pep/population': 'Population Estimates Program (yearly estimates)',
 }
 
 print("📚 Recommended Census Datasets for Socioeconomic Analysis:")
 for ds, desc in RECOMMENDED_DATASETS.items():
     print(f"   • {ds}: {desc}")
+print("\n💡 To explore more datasets, visit:")
+print(f"   https://api.census.gov/data/2020.html")
+print("\n💡 To see variables for a dataset, visit:")
+print(f"   https://api.census.gov/data/2020/acs/acs5/variables.html")
 
 # %% [markdown]
 # ### 2.2 Curated Variable Groups for Solar Analysis
@@ -241,9 +275,10 @@ category_dropdown = widgets.Dropdown(
 )
 
 # Multi-select for variables
+# Note: SelectMultiple value must be a tuple of option keys that exist in options
 variable_select = widgets.SelectMultiple(
     options=list(ALL_VARIABLES.items()),
-    value=[list(ALL_VARIABLES.keys())[0]],  # Default to first variable
+    value=tuple([list(ALL_VARIABLES.keys())[0]]),  # Must be tuple of keys from options
     description='Variables:',
     rows=10,
     style={'description_width': '100px'},
@@ -274,7 +309,8 @@ def update_variables(*args):
         options = [(code, f"{name}") for code, name in cat_vars.items()]
     variable_select.options = options
     if options:
-        variable_select.value = [options[0][0]]
+        # SelectMultiple value must be a tuple of keys
+        variable_select.value = tuple([options[0][0]])
 
 category_dropdown.observe(update_variables, names='value')
 
@@ -379,6 +415,7 @@ def fetch_census_data_for_pv_areas(
 
 # %%
 # Fetch census data using current widget selections
+# Convert tuple from SelectMultiple to list
 selected_vars = list(variable_select.value)
 selected_year = year_dropdown.value
 selected_dataset = dataset_dropdown.value

@@ -133,7 +133,6 @@ def read_parquet_with_pandas(
     elif 'geometry' in df.columns and df['geometry'].dtype == 'object' and isinstance(df['geometry'].iloc[0], bytes):
         df['geometry'] = df['geometry'].apply(wkb.loads)
         
-
     gdf = gpd.GeoDataFrame(df, geometry='geometry', crs='EPSG:4326')
     return gdf
 
@@ -146,7 +145,7 @@ full_gdf = read_parquet_with_pandas(DATASET_URI)
 t2 = time.time()
 print(f"Full Dataset fetched in {t2 - t1:.2f} seconds.")
 
-print(f"Loaded {len(full_gdf):,} PV installations within AOI.")
+print(f"Loaded {len(full_gdf):,} PV installations from global dataset.")
 
 # Display count by dataset name
 print("\nCounts by Dataset Source:")
@@ -240,33 +239,27 @@ fig.show()
 
 # cast bbox coords as floats to avoid ST_MakeEnvelope type mismatch with parsing as Decimal
 print(f"\nQuerying dataset with DuckDB for AOI filtering...")
-# get global extent of our filtered gdf to use as initial bbox filter for parquet scan
+# get global extent of our already filtered gdf to use as initial bbox filter for parquet scan
 global_bounds = [float(coord) for coord in pv_gdf.total_bounds]  # returns (minx, miny, maxx, maxy)
 print(f"Global bounds of filtered AOI dataset: {global_bounds}")
 
 # use appropriate spatial function depending if consolidated dataset was exported with WKT or WKB geometries
 # geom_cast = 
 casted_coords = ', '.join(f"CAST({coord} AS DOUBLE)" for coord in global_bounds)
-intersect_query = f"""WITH pv_data AS (
-    SELECT *
-    FROM read_parquet('{DATASET_URI}')
-    WHERE ST_Within(ST_GeomFromText(geometry), ST_MakeEnvelope({casted_coords}))
-) 
-"""
+intersect_query = f"""
+SELECT *
+FROM read_parquet('{DATASET_URI}')
+WHERE """
+
 # handle multiple bboxes by unioning results
 for idx, AOI_BBOX in enumerate(AOI_bboxes):
     
     bbox_coords = ', '.join([str(coord) for coord in AOI_BBOX])
     casted_coords = ', '.join(f"CAST({coord} AS DOUBLE)" for coord in AOI_BBOX)
     # handle WKT geometry in our dataset
-    query = f"""
-        SELECT *
-        FROM pv_data
-        WHERE ST_Within(ST_GeomFromText(geometry), ST_MakeEnvelope({casted_coords}))
-    """
+    query = f"""ST_Within(ST_GeomFromText(geometry), ST_MakeEnvelope({casted_coords}))"""
     if idx != len(AOI_bboxes) - 1:
-        query += """
-        UNION ALL
+        query += """ OR 
         """
     intersect_query += query
 
@@ -807,6 +800,8 @@ completeness_scores = {
     'Has coordinates': ((pv_gdf['centroid_lon'].notna()) & 
                         (pv_gdf['centroid_lat'].notna())).sum() / len(pv_gdf) * 100,
     'Unique IDs': (1 - pv_gdf['unified_id'].duplicated().sum() / len(pv_gdf)) * 100,
+    'Has original area data': pv_gdf['source_area_m2'].notna().sum() / len(pv_gdf) * 100,
+    'Has capacity data': pv_gdf['capacity_mw'].notna().sum() / len(pv_gdf) * 100
 }
 
 for metric, score in completeness_scores.items():
@@ -840,12 +835,19 @@ print(f"   Initial count: {initial_count:,}")
 
 # Check for exact duplicates in geometry
 # Note: This can be slow for large datasets as it compares every geometry
-duplicates_mask = pv_gdf.geometry.duplicated()
-num_duplicates = duplicates_mask.sum()
+# duplicates_mask = pv_gdf.geometry.duplicated()
+# num_duplicates = duplicates_mask.sum()
+og_rows = len(pv_gdf)
+
+# see here for recommended approach for deduplication: https://geopandas.org/en/latest/docs/user_guide/how_to.html
+pv_gdf['geometry'] = pv_gdf['geometry'].normalize()
+pv_gdf_dedup = pv_gdf.drop_duplicates(subset=['geometry'], inplace=False, ignore_index=True)
+num_duplicates = og_rows - len(pv_gdf_dedup)  
+
 
 print(f"   Exact geometry duplicates found: {num_duplicates:,}")
 
-pv_gdf_dedup = pv_gdf[~duplicates_mask].copy()
+# pv_gdf_dedup = pv_gdf[~duplicates_mask].copy()
 print(f"   Count after GeoPandas deduplication: {len(pv_gdf_dedup):,}")
 
 # %% [markdown]
@@ -974,9 +976,11 @@ con_persistent = duckdb.connect(db_path)
 con_persistent.execute("INSTALL spatial; LOAD spatial;")
 con_persistent.execute("INSTALL httpfs; LOAD httpfs;")
 
+# give preference to geopandas until we can investigate the larger number of duplicates from duckdb+h3
+final_df = pv_gdf 
 # Write the deduplicated dataframe to a table
 # We prefer the DuckDB result if available, else GeoPandas result
-final_df = pv_duck_dedup if DUCKDB_SUCCESS else pv_gdf_dedup
+# final_df = pv_duck_dedup if DUCKDB_SUCCESS else pv_gdf_dedup
 
 try:
     # Convert geometry to WKT for DuckDB storage (if it's not already strings)

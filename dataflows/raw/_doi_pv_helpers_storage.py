@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # import ducklake connection helper from utils/ducklake.py
-from utils.ducklake import _create_ducklake_connection
+# from utils.ducklake import _create_ducklake_connection
 
 
 
@@ -194,12 +194,13 @@ def _duckdb_table_from_geoarrow(
         Number of rows inserted
     """
     # Drop existing table
-    conn.execute(f"DROP VIEW IF EXISTS {table_name}")
+    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
     try:
         # Convert using geoarrow-rs which preserves geometry information
-        from geoarrow.rust.core import to_geopandas
-        gdf = to_geopandas(arrow_table)
+        # from geoarrow.rust.core import to_geopandas
+        # gdf = to_geopandas(arrow_table)
+        gdf = gpd.GeoDataFrame.from_arrow(arrow_table, geometry='geometry')
 
         # Handle DuckDB table creation - DuckDB doesn't support geoarrow extension types
         if isinstance(gdf, gpd.GeoDataFrame) and hasattr(gdf, 'geometry') and gdf.geometry is not None:
@@ -267,8 +268,8 @@ def _geoparquet_export(
     """
     parquet_file = output_dir / f"raw_{dataset_name}.parquet"
     print(f"   📦 Exporting {dataset_name} to GeoParquet: {parquet_file}")
-    from geoarrow.rust.core import to_geopandas
-    gdf = to_geopandas(arrow_table)
+    # from geoarrow.rust.core import to_geopandas
+    gdf = gpd.GeoDataFrame.from_arrow(arrow_table, geometry='geometry')
     gdf.to_parquet(parquet_file, geometry_encoding='WKB', compression='zstd', write_covering_bbox=True, schema_version='1.1.0')
     print(f"   ✅ Exported to GeoParquet using GeoPandas")
 
@@ -432,38 +433,38 @@ def _geoparquet_export_cloud(
             # This ensures DuckDB can read the geometry properly (not GeoArrow binary)
             import tempfile
             import os
-            try:
-                from geoarrow.rust.core import to_geopandas
-            except ImportError:
-                print("   ⚠️  geoarrow.rust.core not available") 
-            else:
+            # try:
+            #     from geoarrow.rust.core import to_geopandas
+            # except ImportError:
+            #     print("   ⚠️  geoarrow.rust.core not available") 
+            # else:
                 # Use temp file approach with proper WKB encoding
-                with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as temp_file:
-                    temp_path = temp_file.name
+            with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as temp_file:
+                temp_path = temp_file.name
 
-                    # Convert to GeoPandas and export with WKB encoding (same as local export)
-                    gdf = to_geopandas(arrow_table)
-                    gdf.to_parquet(
-                        temp_path,
-                        geometry_encoding='WKB',
-                        compression='zstd',
-                        write_covering_bbox=True,
-                        schema_version='1.1.0'
-                    )
+                # Convert to GeoPandas and export with WKB encoding (same as local export)
+                gdf = gpd.GeoDataFrame.from_arrow(arrow_table, geometry='geometry')
+                gdf.to_parquet(
+                    temp_path,
+                    geometry_encoding='WKB',
+                    compression='zstd',
+                    write_covering_bbox=True,
+                    schema_version='1.1.0'
+                )
 
-                    # Now upload the properly encoded file using DuckDB
-                    export_sql = f"""
-                    COPY (SELECT * FROM read_parquet('{temp_path}')) TO '{cloud_file_path}'
-                    (FORMAT 'parquet', COMPRESSION 'zstd')
-                    """
+                # Now upload the properly encoded file using DuckDB
+                export_sql = f"""
+                COPY (SELECT * FROM read_parquet('{temp_path}')) TO '{cloud_file_path}'
+                (FORMAT 'parquet', COMPRESSION 'zstd')
+                """
 
-                    # Time the upload
-                    start_time = time.time()
-                    conn.execute(export_sql)
-                    upload_time = time.time() - start_time
+                # Time the upload
+                start_time = time.time()
+                conn.execute(export_sql)
+                upload_time = time.time() - start_time
 
-                    # Clean up temp file
-                    os.unlink(temp_path)
+                # Clean up temp file
+                os.unlink(temp_path)
 
             # Calculate upload speed
             upload_speed_mbps = table_size_mb / upload_time if upload_time > 0 else 0

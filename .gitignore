@@ -50,6 +50,8 @@ db/env_scripts/*.fish
 db/env_scripts/*.sh
 db/*
 db/*/*.parquet
+# ingest cache
+ingest/.hamilton_cache
 
 # Database files
 *.duckdb

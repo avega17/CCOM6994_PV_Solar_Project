@@ -1,7 +1,17 @@
 {
+    "global_pv_ms_planetscope_2025": {
+        "doi": "https://github.com/microsoft/global-renewables-watch/releases/download/v1.0/solar_all_2024q2_v1.gpkg"
+        , "repo": "direct_download"
+        , "compression": null
+        , "label_fmt": "gpkg"
+        , "paper_doi": "https://doi.org/10.48550/arXiv.2503.14860"
+        , "has_imgs": false
+        , "label_count": 86410
+        , "skip": false
+    },
     "usa_cali_usgs_pv_2016": {
         "doi": "10.6084/m9.figshare.3385780.v4"
-        , "repo": "sciencebase"
+        , "repo": "figshare"
         , "compression": null
         , "label_fmt": "geojson"
         , "crs": "NAD83"

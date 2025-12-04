@@ -1,5 +1,7 @@
 # Core packages
 annotated-types
+# only required for initial upload of large consolidated dataset to R2
+boto3
 censusdis
 contextily
 datahugger
@@ -18,7 +20,7 @@ ipython
 # vs code dependency
 ipykernel
 ipywidgets
-# jupytext
+jupytext
 
 # lonboard
 matplotlib
@@ -39,6 +41,7 @@ reverse-geocoder
 scikit-learn
 # scipy
 seaborn
+sf-hamilton
 shapely
 tqdm
 urllib3

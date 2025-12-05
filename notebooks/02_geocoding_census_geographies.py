@@ -26,6 +26,7 @@
 import os
 import time
 import random
+from pathlib import Path
 
 
 import pandas as pd
@@ -52,8 +53,9 @@ import censusdis.maps as cem
 from censusdis.states import IDS_FROM_NAMES, ABBREVIATIONS_FROM_IDS, NAMES_FROM_IDS
 
 
-# Load environment variables
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.getcwd()), '.env'))
+# Load environment variables from .env in parent dir
+parent_dir = Path(__file__).parent.parent
+load_dotenv(dotenv_path=os.path.join(parent_dir, '.env'))
 
 # Configure display options
 pd.set_option('display.max_columns', None)
@@ -71,7 +73,9 @@ nb_start_time = time.time()
 # In the previous notebook, we saved our processed solar panel data to a local DuckDB file `../db/pv_project.ddb`. We will now load it back.
 
 # %%
-DB_PATH = os.getenv('PROJECT_DB', '../db/pv_project.ddb')
+# default to db dir above 
+default_db_file = os.path.join(parent_dir, 'db/pv_project.ddb')
+DB_PATH = os.getenv('PROJECT_DB', default_db_file)
 
 PROJECT_AOI = os.getenv('PROJECT_AOI', '-161.0,17.8,-65.2,47.8')
 PROJECT_AOI = (float(p) for p in PROJECT_AOI.split(','))

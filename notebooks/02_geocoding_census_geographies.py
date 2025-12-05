@@ -183,12 +183,13 @@ unique_countries = pv_gdf['country_code'].unique().tolist()
 print(f"🌐 Unique Countries Found: {unique_countries}")
 # only keep US, PR, VI, GU for our AOIs
 unique_countries = [c for c in unique_countries if c in ['US', 'PR', 'VI', 'GU']]
-print(f"🎯 Target Countries: {unique_countries}")
+print(f"🎯 Filtering our dataset to Target Countries: {unique_countries}")
 
 # filter dataset to only these countries
 pv_gdf = pv_gdf[pv_gdf['country_code'].isin(unique_countries)].copy()
 print(f"📊 Filtered GeoDataFrame now has {len(pv_gdf)} rows.")
-print(f"Removed {BBOX_ROWS - len(pv_gdf)} rows outside target countries.")
+div = "=" * 25 
+print(f"\n{div}\n ***Removed {BBOX_ROWS - len(pv_gdf)} rows outside target countries*** \n{div}\n")
 # group by country and state to see counts
 country_state_counts = pv_gdf.groupby(['country_code', 'rg_state']).size().sort_values(ascending=False).reset_index(name='counts')
 print("📊 Counts by Country and State:")

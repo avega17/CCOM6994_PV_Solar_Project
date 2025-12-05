@@ -40,6 +40,7 @@ import seaborn as sns
 
 from dotenv import load_dotenv
 from tqdm import tqdm
+from IPython.display import display
 
 # Optional: Reverse Geocoder for offline fast geocoding
 try:

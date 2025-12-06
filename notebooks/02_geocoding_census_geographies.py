@@ -26,6 +26,7 @@
 import os
 import time
 import random
+from pathlib import Path
 
 
 import pandas as pd
@@ -39,6 +40,7 @@ import seaborn as sns
 
 from dotenv import load_dotenv
 from tqdm import tqdm
+from IPython.display import display
 
 # Optional: Reverse Geocoder for offline fast geocoding
 try:
@@ -52,8 +54,9 @@ import censusdis.maps as cem
 from censusdis.states import IDS_FROM_NAMES, ABBREVIATIONS_FROM_IDS, NAMES_FROM_IDS
 
 
-# Load environment variables
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.getcwd()), '.env'))
+# Load environment variables from .env in parent dir
+parent_dir = Path(__file__).parent.parent
+load_dotenv(dotenv_path=os.path.join(parent_dir, '.env'))
 
 # Configure display options
 pd.set_option('display.max_columns', None)
@@ -71,7 +74,9 @@ nb_start_time = time.time()
 # In the previous notebook, we saved our processed solar panel data to a local DuckDB file `../db/pv_project.ddb`. We will now load it back.
 
 # %%
-DB_PATH = os.getenv('PROJECT_DB', '../db/pv_project.ddb')
+# default to db dir above 
+default_db_file = os.path.join(parent_dir, 'db/pv_project.ddb')
+DB_PATH = os.getenv('PROJECT_DB', default_db_file)
 
 PROJECT_AOI = os.getenv('PROJECT_AOI', '-161.0,17.8,-65.2,47.8')
 PROJECT_AOI = (float(p) for p in PROJECT_AOI.split(','))
@@ -178,12 +183,13 @@ unique_countries = pv_gdf['country_code'].unique().tolist()
 print(f"🌐 Unique Countries Found: {unique_countries}")
 # only keep US, PR, VI, GU for our AOIs
 unique_countries = [c for c in unique_countries if c in ['US', 'PR', 'VI', 'GU']]
-print(f"🎯 Target Countries: {unique_countries}")
+print(f"🎯 Filtering our dataset to Target Countries: {unique_countries}")
 
 # filter dataset to only these countries
 pv_gdf = pv_gdf[pv_gdf['country_code'].isin(unique_countries)].copy()
 print(f"📊 Filtered GeoDataFrame now has {len(pv_gdf)} rows.")
-print(f"Removed {BBOX_ROWS - len(pv_gdf)} rows outside target countries.")
+div = "=" * 25 
+print(f"\n{div}\n ***Removed {BBOX_ROWS - len(pv_gdf)} rows outside target countries*** \n{div}\n")
 # group by country and state to see counts
 country_state_counts = pv_gdf.groupby(['country_code', 'rg_state']).size().sort_values(ascending=False).reset_index(name='counts')
 print("📊 Counts by Country and State:")

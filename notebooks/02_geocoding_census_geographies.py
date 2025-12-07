@@ -74,9 +74,41 @@ nb_start_time = time.time()
 # In the previous notebook, we saved our processed solar panel data to a local DuckDB file `../db/pv_project.ddb`. We will now load it back.
 
 # %%
-# default to db dir above 
-default_db_file = os.path.join(parent_dir, 'db/pv_project.ddb')
-DB_PATH = os.getenv('PROJECT_DB', default_db_file)
+# Try multiple database locations in priority order
+# parent_dir is the cloned repo root (pv_solar_analysis/)
+default_db_file = os.path.join(parent_dir, 'db', 'pv_project.duckdb')
+env_db = os.getenv('DEMO_DB_PATH') or os.getenv('PROJECT_DB')
+
+# Resolve environment path if it's relative
+def resolve_db_path(path_str):
+    if not path_str:
+        return None
+    p = Path(path_str)
+    if p.is_absolute():
+        return str(p)
+    # Relative path: resolve against parent dir (cloned repo root)
+    resolved = (parent_dir / p).resolve()
+    return str(resolved)
+
+# Priority: env var, then default (inside cloned repo), then cwd
+candidate_paths = [
+    resolve_db_path(env_db) if env_db else None,
+    default_db_file,  # pv_solar_analysis/db/pv_project.duckdb - PREFERRED
+    os.path.join(Path.cwd(), 'db', 'pv_project.duckdb'),
+]
+
+# Find first existing database
+DB_PATH = None
+for candidate in candidate_paths:
+    if candidate and Path(candidate).exists():
+        DB_PATH = str(Path(candidate).resolve())
+        break
+
+# If no existing DB found, use default (inside cloned repo) and create directory
+if not DB_PATH:
+    DB_PATH = default_db_file
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    print(f"⚠️  No existing database found, will create at: {DB_PATH}")
 
 PROJECT_AOI = os.getenv('PROJECT_AOI', '-161.0,17.8,-65.2,47.8')
 PROJECT_AOI = (float(p) for p in PROJECT_AOI.split(','))

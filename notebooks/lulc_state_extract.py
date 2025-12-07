@@ -187,7 +187,7 @@ def main():
     parser.add_argument("--release", default=None, help="Overture release (default from env or latest)")
     args = parser.parse_args()
 
-    # Get repo root (parent of notebooks/)
+    # Get repo root (parent of notebooks/) - this is the cloned repo root
     repo_root = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=repo_root / ".env")
 
@@ -202,15 +202,39 @@ def main():
         resolved = (repo_root / p).resolve()
         return str(resolved)
 
-    # Prefer DEMO_DB_PATH (no ../) over PROJECT_DB (has ../)
+    # Try multiple locations in priority order:
+    # 1. CLI argument (--db)
+    # 2. Environment variable DEMO_DB_PATH or PROJECT_DB (resolved relative to repo root)
+    # 3. repo_root/db/pv_project.duckdb (PREFERRED - inside cloned repo)
+    # 4. current_working_directory/db/pv_project.duckdb
+    # 5. Fallback: create in repo_root/db/ (inside cloned repo)
+    
     env_db = os.getenv("DEMO_DB_PATH") or os.getenv("PROJECT_DB")
-    fallback_db = repo_root / "db" / "pv_project.duckdb"
-    db_path = _resolve_db(args.db) or _resolve_db(env_db) or str(fallback_db)
+    
+    # Primary location: inside the cloned repo (pv_solar_analysis/db/)
+    primary_db = repo_root / "db" / "pv_project.duckdb"
+    
+    candidate_paths = [
+        _resolve_db(args.db) if args.db else None,
+        _resolve_db(env_db) if env_db else None,
+        primary_db,  # Inside cloned repo - PREFERRED
+        Path.cwd() / "db" / "pv_project.duckdb",
+    ]
+    
+    # Find first existing database
+    db_path = None
+    for candidate in candidate_paths:
+        if candidate and Path(candidate).exists():
+            db_path = str(Path(candidate).resolve())
+            break
+    
+    # If no existing DB found, use primary location and create directory
+    if not db_path:
+        primary_db.parent.mkdir(parents=True, exist_ok=True)
+        db_path = str(primary_db)
+        print(f"⚠️  No existing database found, will create at: {db_path}")
     
     print(f"Using database: {db_path}")
-    if not Path(db_path).exists():
-        print(f"⚠️  Database file not found: {db_path}")
-        sys.exit(1)
     
     overture_release = args.release or os.getenv("OVERTURE_RELEASE", om.get_newest_release_version())
     threads = int(os.getenv("DUCKDB_THREADS", "8"))

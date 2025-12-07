@@ -165,7 +165,7 @@ print(os.getcwd())
 print(os.listdir())
 
 # %% [markdown]
-# ## 📥 Tarea 0: Descargar nuestro conjunto e Intro Breve a Datos Geoespaciales
+# ## 📥 Tarea 1: Descargar nuestro conjunto e Intro Breve a Datos Geoespaciales
 # ### Acerca de Nuestro Conjunto de Datos
 # 
 # Estamos trabajando con un **conjunto de datos consolidado global de paneles solares (PV)** que incluye:
@@ -451,7 +451,7 @@ except NameError:
     pass
 
 # %% [markdown]
-# ## ⚙️ 1: Pre-procesamiento para relacionar nuestro conjunto de datos con los Datos Geográficos y Demográficos
+# ## ⚙️ 2: Pre-procesamiento para relacionar nuestro conjunto de datos con los Datos Geográficos y Demográficos
 # 
 # Uno de los aspectos más poderosos de los datos geoespaciales es la capacidad de relacionar diferentes conjuntos de datos basados en su proximidad espacial. En esta sección, realizaremos un pre-procesamiento para relacionar nuestro conjunto de datos de instalaciones fotovoltaicas con las fuentes de las variables geográficas y demográficas que utilizaremos en nuestro análisis estadístico a continuación.
 # 
@@ -461,6 +461,11 @@ except NameError:
 # 2. Cubiertas de Suelo con resolución de 10 metros derivadas del ESA WorldCover 2020 (distribuido por [Overture Maps](https://docs.overturemaps.org/blog/2024/05/16/land-cover/))  
 # 
 # 3. Clasificaciones del Uso de Tierra obtenidas a través de OpenStreetMap (OSM) y procesadas por [Overture Maps](https://docs.overturemaps.org/guides/base/)
+
+# %% [markdown]
+# ### Reverse Geocoding para asignar divisiones del censo a instalaciones fotovoltaicas
+# 
+# Utilizaremos técnicas de *reverse geocoding* para asignar cada instalación fotovoltaica a su correspondiente división del censo (estado, county, census tract). Esto nos permitirá agregar datos demográficos y socioeconómicos relevantes a cada instalación fotovoltaica para nuestro análisis estadístico más adelante.
 
 # %%
 # run our script for reverse geocoding and attaching the census state, county, and tract columns we need to match with census data during our statistical analysis
@@ -505,13 +510,13 @@ con.close()
 print(f"\n💾 DF principal: pv_census_df con {len(pv_census_df):,} instalaciones FV")
 
 # %% [markdown]
-# ## 🌍 Que es el Uso del Suelo y la Cobertura del Suelo (LULC por sus siglas en inglés para Land Use-Land Cover)?
+# ### 🌍 Que es el Uso del Suelo y la Cobertura del Suelo (LULC por sus siglas en inglés para Land Use-Land Cover)?
 # 
 # **Cobertura del Suelo** se refiere a la cubierta física y biológica de la superficie terrestre,
 # incluyendo vegetación, agua, suelo desnudo y estructuras artificiales. Responde a la
 # pregunta: **"¿Qué está físicamente presente en el suelo?"**
 # 
-# ## 🎯 Por que nos interesa la Cobertura de Suelo para nuestro EDA?
+# #### 🎯 Por que nos interesa la Cobertura de Suelo para nuestro EDA?
 # 
 # Entender el contexto de la cobertura del suelo alrededor de las instalaciones solares nos ayuda a:
 # 
@@ -523,7 +528,7 @@ print(f"\n💾 DF principal: pv_census_df con {len(pv_census_df):,} instalacione
 #   
 # ---
 # 
-# ## 📊 Schema de Overture Maps para Cobertura del Suelo 
+# #### 📊 Schema de Overture Maps para Cobertura del Suelo 
 # 
 # [Overture Maps provee cobertura terrestre basada en vectores con la siguiente estructura:](https://docs.overturemaps.org/schema/reference/base/land_cover/)
 # 
@@ -538,40 +543,26 @@ print(f"\n💾 DF principal: pv_census_df con {len(pv_census_df):,} instalacione
 # **Valores para `subtype`**: `barren`, `crop`, `forest`, `grass`, `mangrove`, `moss`,
 # `shrub`, `snow`, `urban`, `wetland`
 
+# %%
+# First, check if lonboard is installed (optional dependency for visualization)
+try:
+    from lonboard import Map, PolygonLayer
+    from lonboard.colormap import apply_categorical_cmap
+    LONBOARD_AVAILABLE = True
+    # print("✅ lonboard disponible para visualización interactiva")
+except ImportError:
+    LONBOARD_AVAILABLE = False
+    print("⚠️ lonboard no instalado - visualizaciones interactivas no disponibles")
+    print("   Para instalar: pip install lonboard")
+
 # %% [markdown]
-# ## 🏘️ What is Land Use?
+# #### 🏘️ Qué es el Uso de la Tierra?
 # 
-# While **Land Cover** describes *what* is physically on the ground, **Land Use**
-# describes *how* humans use that land. It answers the question:
-# **"What is this land being used for?"**
+# Mientras que la **Cobertura del Suelo** describe *qué* está físicamente en el suelo, el **Uso de la Tierra**  
+# describe *cómo* los humanos usan esa tierra. Responde a la pregunta:  
+# **"¿Para qué se está usando esta tierra?"**
 # 
-# ### Common Land Use Categories
-# 
-# | Category | Description | Solar Relevance |
-# |----------|-------------|-----------------|
-# | **Residential** | Housing areas | Rooftop solar potential |
-# | **Commercial** | Retail, offices | Large flat roofs |
-# | **Industrial** | Manufacturing, warehouses | Ground-mount opportunities |
-# | **Agricultural** | Farms, ranches | Agrivoltaics potential |
-# | **Recreation** | Parks, sports facilities | Limited development |
-# | **Protected** | Conservation areas | Generally restricted |
-# | **Developed** | General built-up areas | Mixed potential |
-# 
-# <!-- ---
-# 
-# ## 🎯 Why Land Use Matters for Solar PV Analysis
-# 
-# Land use data helps us understand:
-# 
-# 1. **Zoning Compatibility**: Is solar allowed in this land use zone?
-# 2. **Development Patterns**: Which land use types attract solar investment?
-# 3. **Dual-Use Opportunities**: Agrivoltaics (solar + farming), floating solar, etc.
-# 4. **Policy Implications**: How do land use policies affect solar adoption?
-# 5. **Future Projections**: Where might new solar development occur?
-# 
-# --- -->
-# 
-# ## 📊 Overture Maps Land Use Schema
+# #### 📊 Esquema de Uso de la Tierra de Overture Maps
 # 
 # Overture Maps provides vector-based land use with a hierarchical classification:
 # 
@@ -583,18 +574,21 @@ print(f"\n💾 DF principal: pv_census_df con {len(pv_census_df):,} instalacione
 # | `class` | VARCHAR | Detailed sub-category (farmland, retail, etc.) |
 # | `names` | STRUCT | Feature names (if available) |
 # | `sources` | ARRAY | Data provenance |
-
-# %%
-# First, check if lonboard is installed (optional dependency for visualization)
-try:
-    from lonboard import Map, PolygonLayer
-    from lonboard.colormap import apply_categorical_cmap
-    LONBOARD_AVAILABLE = True
-    print("✅ lonboard disponible para visualización interactiva")
-except ImportError:
-    LONBOARD_AVAILABLE = False
-    print("⚠️ lonboard no instalado - visualizaciones interactivas no disponibles")
-    print("   Para instalar: pip install lonboard")
+# 
+# 
+# #### Categorías Comunes de Uso de la Tierra 
+# 
+# | Categoría | Descripción | Relevancia Solar |
+# |----------|-------------|-----------------|
+# | **Residential** | Housing areas | Rooftop solar potential |
+# | **Commercial** | Retail, offices | Large flat roofs |
+# | **Industrial** | Manufacturing, warehouses | Ground-mount opportunities |
+# | **Agricultural** | Farms, ranches | Agrivoltaics potential |
+# | **Recreation** | Parks, sports facilities | Limited development |
+# | **Protected** | Conservation areas | Generally restricted |
+# | **Developed** | General built-up areas | Mixed potential |
+# 
+# 
 
 # %% [markdown]
 # ### 🔧 Procesamiento y Visualización Interactiva de LULC
@@ -673,7 +667,7 @@ print("   Este proceso puede tomar varios minutos...\n")
 get_ipython().system(f'python "{script_path}" --state {selected_state_fips}')
 
 # %% [markdown]
-# ### 📊 Visualización de LULC
+# ### 🔍 Visualización de LULC
 # 
 # Utilizando lonboard para visualización interactiva de los datos de cobertura de tierra procesados.
 
@@ -808,8 +802,7 @@ def visualize_land_use(state_fips):
                     p.STATE_ABBR,
                     ST_AsText(p.geometry) as pv_geometry,
                     p.lu_ids,
-                    p.lu_subtypes,
-                    p.lu_classes
+                    p.lu_subtypes
                 FROM lulc_enriched_pv_data p
                 WHERE p.STATE_FIPS = '{state_fips}'
                     AND p.lu_ids IS NOT NULL
@@ -890,7 +883,7 @@ display(viz_output)
 # Land use visualization is integrated with land cover above
 
 # %% [markdown]
-# ## 📊 3: Análisis Exploratorio de Datos (EDA), Normalidad, y Análisis de Poder Estadístico
+# ## 📊 3: Análisis Exploratorio de Datos (EDA), Imputación, y Análisis de Normalidad
 # 
 # En esta sección realizaremos:
 # 1. Descarga de variables del Censo para **todos** los census tracts de EEUU
@@ -1093,8 +1086,8 @@ for var in ['capacity_mw', 'source_area_m2']:
             if len(valid_subset) > 30:  # Need enough data for meaningful correlation
                 corr, p_val = stats.pointbiserialr(valid_subset['missing'], valid_subset['area_m2'])
                 print(f"\n{var} missingness vs area_m2:")
-                print(f"  Correlación: {corr:.3f}")
-                print(f"  p-value: {p_val:.4f}")
+                print(f"  Correlación: {corr:.4f}")
+                print(f"  p-value: {p_val:E}")
                 
                 if abs(corr) > 0.1 and p_val < 0.05:
                     print(f"  ✅ Correlación significativa → MAR o MNAR")
@@ -1104,10 +1097,9 @@ for var in ['capacity_mw', 'source_area_m2']:
 
 
 # %% [markdown]
-# #### MICE Imputation for capacity_mw
+# #### Imputación con MICE (Multiple Imputation by Chained Equations)
 # 
-# Multiple Imputation by Chained Equations (MICE) uses observed relationships between
-# variables to impute missing values. For capacity_mw, we use:
+# Este método utiliza relaciones observadas entre variables para imputar valores faltantes. Para capacity_mw, usamos:
 # 
 # **Features for imputation:**
 # - area_m2 (strong predictor - larger installations have higher capacity)
@@ -1115,10 +1107,10 @@ for var in ['capacity_mw', 'source_area_m2']:
 # - State-level characteristics (aggregated solar metrics)
 # - Dataset source (as categorical indicator)
 # 
-# **Why MICE?**
-# - Handles MAR mechanism (our data shows source-dependent missingness)
-# - Preserves relationships between variables
-# - Provides multiple imputations to quantify uncertainty
+# **Utilizamos MICE porque:**
+# - Maneja el mecanismo MAR (nuestros datos muestran ausencia dependiente de la fuente)
+# - Preserva las relaciones entre variables
+# - Proporciona múltiples imputaciones para cuantificar la incertidumbre
 
 # %%
 from sklearn.experimental import enable_iterative_imputer
@@ -1240,9 +1232,9 @@ plt.show()
 
 # %%
 print("\n💡 Interpretación:")
-print("   - Las imputaciones preservan la relación entre área y capacidad")
-print("   - La distribución de valores imputados es consistente con los valores originales")
-print("   - Usaremos 'capacity_mw_imputed' para análisis posteriores que requieran esta variable")
+print("   - Las imputaciones preservan alguna relación entre área y capacidad")
+print("   - La distribución de valores imputados es relativamente consistente con los valores originales excepto para valores muy bajos de area")
+print("   - No usaremos 'capacity_mw_imputed' para análisis posteriores en este proyecto")
 
 # %% [markdown]
 # ### 3.2 Análisis de Normalidad de Variables del Dataset PV
@@ -1385,22 +1377,23 @@ pv_stats = pv_census_df[pv_analysis_vars].describe()
 print(pv_stats.to_string())
 
 # %% [markdown]
-# ## 📚 Conceptual Framework: Socioeconomic Factors & Solar Adoption
+# ### 📚 3.3 Factores Socioeconómicos y Adopción de Energía Solar
 # 
-# Research suggests several socioeconomic factors influence solar panel adoption [Anadir referencias de Nicole, reporte de IEEFA, paper de DeepSolar++ que utiliza datos del Censo]:
+# Varias publicaciones ([1](https://www.sciencedirect.com/science/article/pii/S2542435118305701), [2](https://www.sciencedirect.com/science/article/pii/S2542435122004779), [3](https://www.climatechange.ai/papers/iclr2025/55), [4](https://ieefa.org/resources/solar-crossroads-puerto-rico)) sugieren que factores socioeconómicos influyen en la adopción de paneles solares.
 # 
-# ### Research Question
-# Are there statistically significant differences in socioeconomic and demographic characteristics between census tracts with and without solar PV installations?
+# #### Pregunta de Investigación
 # 
-# ### Hypothesis
-# We hypothesize that census tracts with solar PV installations will exhibit significantly different characteristics compared to those without. Specifically:
-# - **Income & Housing**: Higher median income and home values in tracts with solar.
-# - **Education**: Higher educational attainment in tracts with solar.
-# - **Demographics**: Differences in racial/ethnic composition and diversity.
-# - **Density**: Differences in population density (urban vs rural adoption patterns).
+# ¿Existen diferencias estadísticamente significativas en las características socioeconómicas y demográficas entre los sectores censales con y sin instalaciones solares fotovoltaicas?
+# 
+# #### Hipótesis
+# Hipotetizamos que los sectores censales con instalaciones solares fotovoltaicas exhibirán características significativamente diferentes en comparación con aquellos sin instalaciones. Específicamente:
+# - **Ingresos y Vivienda**: Ingresos medianos y valores de vivienda más altos en los sectores con solar.
+# - **Educación**: Mayor nivel educativo en los sectores con solar.
+# - **Demografía**: Diferencias en la composición racial/étnica y diversidad.
+# - **Densidad**: Diferencias en la densidad poblacional (patrones de adopción urbana vs rural).
 
 # %% [markdown]
-# ### 3.3 Descarga de Variables del Censo para Todos los Census Tracts
+# #### Descarga de Variables del Censo para Todos los Census Tracts
 # 
 # Utilizamos la API del Censo de EEUU vía `censusdis` para explorar los conjuntos de datos y variables disponibles para el año 2020
 # 
@@ -1433,7 +1426,7 @@ df_variables = ced.variables.all_variables(sample_group['DATASET'], CENSUS_YEAR,
 display(df_variables)
 
 # %% [markdown]
-# ### Variables del Censo Seleccionadas
+# #### Variables del Censo Seleccionadas
 #  Seleccionamos las siguientes variables demográficas y socioeconómicas:
 # 
 # | Variable | Código | Descripción |
@@ -1446,8 +1439,7 @@ display(df_variables)
 # | pct_bachelors_or_higher | DP02_0068PE | % con bachillerato o más |
 # | pct_hispanic | DP05_0071PE | % población hispana |
 # 
-# 
-#   
+# <!--   
 # 
 # | Factor | Census Variable Groups | Expected Difference (PV vs No PV) |
 # |--------|----------------------|-------------------|
@@ -1456,7 +1448,7 @@ display(df_variables)
 # | **Housing** | B25077 (Home Value) | Higher in PV tracts |
 # | **Education** | B15003 (Educational Attainment) | Higher in PV tracts |
 # | **Diversity** | B03002 (Race/Ethnicity) | Significant difference |
-# | **Density** | B01003 (Population) / Area | Significant difference |
+# | **Density** | B01003 (Population) / Area | Significant difference | -->
 
 # %%
 # Detailed table variables
@@ -1578,7 +1570,7 @@ print(f"   Columnas: {list(census_all_tracts.columns)}")
 display(census_all_tracts.head())
 
 # %% [markdown]
-# ### 3.3 Creación del DataFrame de Análisis
+# #### 3.3.1 Creación del DataFrame de Análisis
 # 
 # Unimos los datos del Censo con nuestro conteo de instalaciones FV por tract para crear:
 # - `n_solar`: Cantidad de instalaciones FV en el tract
@@ -1594,7 +1586,7 @@ display(census_all_tracts.head())
 # 
 # ---
 # 
-# #### 📐 Sobre la Transformación Logarítmica (`log_solar_count`)
+# ##### 📐 Sobre la Transformación Logarítmica (`log_solar_count`)
 # 
 # La transformación `log(n + 1)` (también llamada *log1p*) es una técnica estadística común para:
 # 
@@ -1605,14 +1597,14 @@ display(census_all_tracts.head())
 #    los valores altos y expande los bajos, aproximando a una distribución más simétrica.
 # 
 # 3. **Estabilizar varianza**: En datos de conteo, la varianza suele aumentar con la media.
-#    La transformación log estabiliza esta varianza (homocedasticidad). [???]
+#    La transformación log estabiliza esta varianza haciendo los datos más adecuados para análisis
 # 
 # 4. **Interpretación multiplicativa**: En regresión, coeficientes con log se interpretan como
 #    cambios porcentuales: "un aumento de 1 unidad en X se asocia con un aumento de β% en el conteo"
 # 
 # **Cuándo usarla:**
 # - En regresiones lineales donde la variable dependiente es un conteo
-# - Cuando los residuos muestran heterocedasticidad [Aclarar aqui; cambiar termino; consultar con Francheska??]
+# - Cuando los residuos muestran diferencias de varianza (heterocedasticidad)
 # - Para visualizaciones donde los valores extremos comprimen el resto
 # 
 # **Referencias:**
@@ -1786,7 +1778,7 @@ print(f"\n✅ Dataset limpio para análisis: {len(analysis_clean):,} tracts")
 print(f"   Eliminados por datos faltantes: {len(analysis_gdf) - len(analysis_clean):,}")
 
 # %% [markdown]
-# ### 3.3 Visualización de Distribuciones y Correlaciones
+# #### 3.3.2 Visualización de Distribuciones y Correlaciones
 
 # %%
 # Distribution plots for key variables
@@ -1824,7 +1816,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### 3.4 Análisis de Clustering con HDBSCAN
+# #### 3.3.3 Análisis de Clustering con HDBSCAN
 # 
 # Antes de las pruebas de hipótesis, realizamos clustering basado en densidad para descubrir patrones naturales en los datos de censo y solar. HDBSCAN (Hierarchical Density-Based Spatial Clustering of Applications with Noise) es preferido sobre K-Means porque:
 # 
@@ -2119,7 +2111,7 @@ if HDBSCAN_AVAILABLE and n_clusters > 0:
             print(f"   {feat}: {cluster_mean:.2f} (z={z_score:+.2f})")
 
 # %% [markdown]
-# ### 3.4.1 Spatial Clustering of Solar Installations (Lat/Lon)
+# ##### Spatial Clustering of Solar Installations (Lat/Lon)
 # 
 # To complement the socio-economic clustering, we perform spatial clustering using the geographic coordinates (latitude/longitude) of the **individual PV installations**. This helps identify spatial "hotspots" of solar adoption that may not be explained solely by socio-economic factors.
 # 
@@ -2198,7 +2190,7 @@ else:
     print("   ⚠️ HDBSCAN not available.")
 
 # %% [markdown]
-# ### 3.5 Pruebas de Normalidad
+# #### 3.3.4 Pruebas de Normalidad
 # 
 # Antes de seleccionar las pruebas estadísticas apropiadas, debemos verificar si nuestras variables siguen una distribución normal. Utilizamos:
 # 
@@ -2269,7 +2261,7 @@ print("Nota: ✓ indica p > 0.05 (no se rechaza normalidad), ✗ indica p ≤ 0.
 normality_df = pd.DataFrame(normality_results)
 
 # %% [markdown]
-# ### 3.5 Análisis de Poder Estadístico
+# #### 3.5 Análisis de Poder Estadístico
 # 
 # El análisis de poder nos ayuda a determinar si tenemos suficientes observaciones para detectar efectos estadísticamente significativos.
 # 
@@ -2290,9 +2282,6 @@ print(f"\nTamaños de muestra actuales:")
 print(f"   Tracts CON instalaciones FV (n₁): {n_with_solar:,}")
 print(f"   Tracts SIN instalaciones FV (n₂): {n_without_solar:,}")
 print(f"   Ratio n₂/n₁: {n_without_solar/n_with_solar:.2f}")
-
-# %%
-
 
 # %%
 # Calculate required sample sizes for different effect sizes
@@ -2357,14 +2346,16 @@ print("   Con nuestros tamaños de muestra, tenemos poder estadístico suficient
 print("   para detectar efectos pequeños (d=0.2) con alta confiabilidad.")
 
 # %% [markdown]
-# ## 📈 4: Pruebas Estadísticas de Diferencias entre Grupos
+# ## 📈 4: Corroboración de Hipótesis y Relaciones entre variables
+# 
+# ### 4.1: Pruebas Estadísticas de Diferencias entre Grupos
 # 
 # Ahora que hemos verificado la normalidad (o falta de ella) de nuestras variables y confirmado que tenemos poder estadístico suficiente, realizamos las pruebas para determinar si existen diferencias significativas entre:
 # 
 # - **Grupo 1**: Census tracts CON instalaciones fotovoltaicas
 # - **Grupo 2**: Census tracts SIN instalaciones fotovoltaicas
 # 
-# ### Selección de Prueba
+# #### Selección de Prueba
 # - Si los datos son **normales**: t-test independiente
 # - Si los datos **NO son normales**: Mann-Whitney U (no paramétrica)
 # 
@@ -2762,7 +2753,7 @@ if all([logit_model is not None, linear_model is not None, poisson_model is not 
 # 
 # 2. **Poder estadístico**: Con nuestros tamaños de muestra, tenemos poder suficiente para detectar efectos pequeños a grandes.
 # 
-# 3. **Clustering HDBSCAN**: Identificamos patrones naturales en los datos que revelan perfiles socioeconómicos distintos. El test Chi-cuadrado muestra si estos clusters están asociados significativamente con la presencia de instalaciones FV.
+# 3. **Clustering HDBSCAN**: Identificamos patrones naturales en los datos que revelan perfiles socioeconómicos distintos. El test Chi-cuadrado muestra si estos clusters están asociados con la presencia de instalaciones FV.
 # 
 # 4. **Diferencias significativas**: Las pruebas de hipótesis identifican qué variables del Censo difieren significativamente entre tracts con y sin instalaciones FV.
 # 
@@ -2786,31 +2777,6 @@ if all([logit_model is not None, linear_model is not None, poisson_model is not 
 # - ✅ Regresión logística para presencia de solar
 # - ✅ Regresión lineal para tasa de adopción
 # - ✅ Regresión de Poisson para conteo de instalaciones
-# 
-# ### Próximos Pasos para Part A (Due: Dec 8, 2025):
-# 
-# - [REU Hoy] **Refinamiento de hipótesis**: Consolidar hallazgos de clustering y regresiones para definir hipótesis principal y sub-hipótesis
-# - [Drafted] **Poster**: Abstract, pregunta de investigación, métodos, resultados, conclusiones, referencias
-# - [Drafted] **PDF de métodos**: 1-2 páginas expandiendo la sección de métodos del poster
-# - [Needs work and testing] **Documentación de reproducibilidad**: Actualizar README con instrucciones de ejecución
-# 
-# ### 🔬 Trabajo Futuro (Part B):
-# 
-# La variable `capacity_mw` (capacidad de generación en megavatios) es un excelente candidato para **imputación o derivación** basada en:
-# 
-# 1. **Área del panel (`area_m2`)**: Existe una relación física directa entre área y capacidad
-#    - Regla general: ~150-200 W/m² para paneles cristalinos típicos
-#    - Fórmula aproximada: `capacity_kw ≈ area_m2 * 0.15 a 0.20`
-# 
-# 2. **Ángulo de inclinación del panel**: Si está disponible, mejora significativamente la precisión
-#    - Paneles con inclinación óptima (latitud ± 15°) maximizan generación
-# 
-# 3. **Modelos físicos de energía existentes**:
-#    - **PVWatts** (NREL): Modelo estándar de la industria para estimación de generación
-#    - **SAM** (System Advisor Model): Modelo más detallado que incluye degradación y pérdidas
-#    - Parámetros: radiación solar local, temperatura, eficiencia del panel, orientación
-# 
-# Esta imputación permitiría análisis más completos sobre la capacidad de generación agregada por tract.
 # 
 # ## 📚 Referencias y Documentación
 # 

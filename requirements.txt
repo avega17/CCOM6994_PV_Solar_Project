@@ -5,6 +5,7 @@ boto3
 censusdis
 contextily
 datahugger
+divintseg
 duckdb>=1.4.1
 folium
 fsspec
@@ -12,7 +13,7 @@ fsspec
 geopandas
 # geopy
 # geos
-
+hdbscan>=0.8.29
 # Discrete Global Grid System used for spatial indexing
 h3>=4.2.0
 # ipyleaflet

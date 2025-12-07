@@ -56,7 +56,20 @@ from censusdis.states import IDS_FROM_NAMES, ABBREVIATIONS_FROM_IDS, NAMES_FROM_
 
 # Load environment variables from .env in parent dir
 parent_dir = Path(__file__).parent.parent
-load_dotenv(dotenv_path=os.path.join(parent_dir, '.env'))
+# Check if we're in the cloned pv_solar_analysis folder structure
+if parent_dir.name == 'pv_solar_analysis':
+    # Already in the cloned repo, use parent_dir as is
+    repo_root = parent_dir
+else:
+    # Running from outer development repo, look for pv_solar_analysis subdirectory
+    pv_solar_path = parent_dir / 'pv_solar_analysis'
+    if pv_solar_path.exists():
+        repo_root = pv_solar_path
+    else:
+        # Fallback to parent_dir if pv_solar_analysis doesn't exist
+        repo_root = parent_dir
+
+load_dotenv(dotenv_path=os.path.join(repo_root, '.env'))
 
 # Configure display options
 pd.set_option('display.max_columns', None)
@@ -75,8 +88,8 @@ nb_start_time = time.time()
 
 # %%
 # Try multiple database locations in priority order
-# parent_dir is the cloned repo root (pv_solar_analysis/)
-default_db_file = os.path.join(parent_dir, 'db', 'pv_project.duckdb')
+# repo_root is either pv_solar_analysis/ (cloned repo) or parent dir (dev repo with pv_solar_analysis/ subfolder)
+default_db_file = os.path.join(repo_root, 'db', 'pv_project.duckdb')
 env_db = os.getenv('DEMO_DB_PATH') or os.getenv('PROJECT_DB')
 
 # Resolve environment path if it's relative
@@ -86,8 +99,8 @@ def resolve_db_path(path_str):
     p = Path(path_str)
     if p.is_absolute():
         return str(p)
-    # Relative path: resolve against parent dir (cloned repo root)
-    resolved = (parent_dir / p).resolve()
+    # Relative path: resolve against repo root
+    resolved = (repo_root / p).resolve()
     return str(resolved)
 
 # Priority: env var, then default (inside cloned repo), then cwd
@@ -115,8 +128,8 @@ PROJECT_AOI = (float(p) for p in PROJECT_AOI.split(','))
 
 print(f"📂 Connecting to database: {DB_PATH}")
 
-# Connect to the database
-con = duckdb.connect(DB_PATH)
+# Connect to the database in read-only mode to avoid lock contention
+con = duckdb.connect(DB_PATH, read_only=True)
 con.execute("INSTALL spatial; LOAD spatial;")
 
 # Check available tables
@@ -124,7 +137,7 @@ tables = con.execute("SHOW TABLES").fetchall()
 print(f"   Tables found: {[t[0] for t in tables]}")
 
 # Load the processed PV data
-# We use read_df to get a pandas DataFrame, then convert to GeoDataFrame1
+# We use read_df to get a pandas DataFrame, then convert to GeoDataFrame
 print("   Loading 'processed_pv_data'...")
 try:
     pv_df = con.execute("SELECT ST_AsText(geometry) AS geometry, * EXCLUDE geometry FROM processed_pv_data").df()
@@ -327,7 +340,11 @@ pv_enriched_gdf = pv_enriched_gdf.rename(columns={
 pv_enriched_gdf = gpd.GeoDataFrame(pv_enriched_gdf, geometry='geometry', crs='EPSG:4326')
 
 # %%
-pv_enriched_gdf.sample(3)
+# Only sample if DataFrame has rows
+if len(pv_enriched_gdf) > 0:
+    display(pv_enriched_gdf.sample(min(3, len(pv_enriched_gdf))))
+else:
+    print("⚠️ pv_enriched_gdf is empty, skipping sample display")
 
 # %%
 # verify there are no pv labels with no state fips

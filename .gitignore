@@ -25,6 +25,7 @@ uv.lock
 
 # avoid recursive repo that gets cloned as part of E2E notebook for class deliverable
 pv_solar_analysis/*
+data
 
 # API keys and tokens
 *.key

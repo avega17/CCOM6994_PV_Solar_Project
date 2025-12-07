@@ -142,14 +142,60 @@ CCOM6994_PV_Solar_Project/
 ├── db/                 # DuckDB database and GeoParquet exports
 ├── ingest/             # Data ingestion manifests and configs
 ├── notebooks/          # Jupyter notebooks for EDA and analysis
+│   ├── 00_pv_dataset_consolidation.ipynb  # Initial PV data consolidation
 │   ├── 01_geopandas_spatial_data_intro.ipynb
-│   ├── 02_geocoding_fetch_geometries.ipynb
+│   ├── 02_geocoding_census_geographies.py # Census tract geocoding
 │   ├── 03_census_data_demo.ipynb
-│   ├── 04_overture_land_cover_fetch.ipynb
-│   └── 05_overture_land_use_fetch.ipynb
+│   ├── 05_overture_land_use_fetch.ipynb
+│   └── lulc_state_extract.py              # State-level LULC extraction (used by E2E)
+├── solar_pv_census_data_analysis_E2E.ipynb # Main end-to-end analysis notebook
+├── solar_pv_census_data_analysis_e2e.py    # Python script version of E2E notebook
 ├── pyproject.toml      # Project configuration and dependencies
 ├── requirements.txt    # Pip-compatible dependency list
 └── README.md
+```
+
+---
+
+## Usage
+
+### Running the End-to-End Analysis
+
+The main analysis workflow is available as both a Jupyter notebook and Python script:
+
+```bash
+# As Jupyter notebook (recommended for interactive exploration)
+jupyter notebook solar_pv_census_data_analysis_E2E.ipynb
+
+# As Python script (for headless execution)
+python solar_pv_census_data_analysis_e2e.py
+```
+
+### Interactive LULC Processing
+
+The E2E notebook includes interactive widgets for processing Land Use/Land Cover data:
+
+1. **State Selection**: Dropdown widget to select states with PV installations
+2. **LULC Processing**: Click "Procesar LULC" to fetch Overture Maps data for selected state
+   - Fetches land cover and land use data from S3
+   - Performs spatial joins with PV installations
+   - Persists results to `lulc_enriched_pv_data` table in DuckDB
+   - Takes 2-10 minutes per state depending on size
+3. **Visualization**: View land cover and land use distributions using interactive charts
+
+**Note**: Each state only needs to be processed once. Results are cached in the database.
+
+### Running Individual Components
+
+```bash
+# Geocode PV installations to census tracts
+python notebooks/02_geocoding_census_geographies.py
+
+# Extract LULC data for a specific state (e.g., California)
+python notebooks/lulc_state_extract.py --state CA
+
+# Or use state FIPS code
+python notebooks/lulc_state_extract.py --state 06
 ```
 
 ---

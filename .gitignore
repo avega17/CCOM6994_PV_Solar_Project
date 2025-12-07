@@ -50,6 +50,7 @@ db/env_scripts/*.fish
 db/env_scripts/*.sh
 db/*
 db/*/*.parquet
+db/data/*
 # ingest cache
 ingest/.hamilton_cache
 

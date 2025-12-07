@@ -511,7 +511,7 @@ con = duckdb.connect(DB_PATH)
 con.execute("INSTALL spatial; LOAD spatial;")
 
 # %%
-# Query the census-enriched PV data
+# Query the census-enriched PV data - maintain consistent variable name pv_census_df
 pv_census_df = con.execute("""
     SELECT
         ST_AsText(geometry) as geometry,
@@ -539,6 +539,11 @@ display(state_counts.head(10))
 
 # %%
 con.close()
+
+# %%
+# Ensure consistent variable naming: pv_census_df is our primary dataframe after geocoding
+# This allows subsequent cells to work even if LULC processing fails
+print(f"\n💾 Variable principal: pv_census_df con {len(pv_census_df):,} instalaciones FV")
 
 # %% [markdown]
 # ## 🌍 Que es el Uso del Suelo y la Cobertura del Suelo (LULC por sus siglas en inglés para Land Use-Land Cover)?
@@ -619,9 +624,16 @@ state_options = [(f"{row['STATE_ABBR']} ({row['STATE_FIPS']})", row['STATE_FIPS'
 print(f"Estados disponibles con instalaciones FV: {len(state_options)}")
 
 # %%
+# Find a good default state (prefer AZ, NV, or HI - smaller area but good PV counts)
+default_state_fips = '04'  # Arizona - good balance of PV count and area
+if default_state_fips not in [opt[1] for opt in state_options]:
+    default_state_fips = state_options[0][1]  # Fallback to first available
+
+# %%
 # Create widgets for state selection and LULC processing
 state_dropdown = widgets.Dropdown(
     options=state_options,
+    value=default_state_fips,  # Set default to Arizona
     description='Estado:',
     disabled=False,
     layout=Layout(width='300px')
@@ -674,6 +686,7 @@ Utilizando lonboard para visualización interactiva de los datos de cobertura de
 # Create visualization widget
 viz_state_dropdown = widgets.Dropdown(
     options=state_options,
+    value=default_state_fips,  # Use same default as processing dropdown
     description='Visualizar:',
     disabled=False,
     layout=Layout(width='300px')

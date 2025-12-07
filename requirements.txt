@@ -43,5 +43,6 @@ scikit-learn
 seaborn
 sf-hamilton
 shapely
+statsmodels
 tqdm
 urllib3

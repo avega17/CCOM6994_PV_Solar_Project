@@ -143,12 +143,12 @@ def fetch_overture_duckdb(con: duckdb.DuckDBPyConnection, layer: str, bbox: tupl
     
     # Build column list based on layer type
     # land_cover: id, subtype, geometry
-    # land_use: id, subtype, class, names, geometry
+    # land_use: id, subtype, geometry (we don't need class)
     if layer == "land_cover":
         cols = "id, subtype, geometry"
         table_name = "lc_geom"
     else:
-        cols = "id, subtype, class, geometry"
+        cols = "id, subtype, geometry"
         table_name = "lu_geom"
     
     minx, miny, maxx, maxy = bbox
@@ -254,9 +254,9 @@ def main():
         con.execute("SET parquet_metadata_cache = true;")
         con.execute("SET enable_http_metadata_cache = true;")
 
-    # Load PV data for the state (convert geometry to WKT for safe parsing)
+    # Load PV data for the state with TRACT_GEOID for optimized bbox fetching
     pv_query = """
-        SELECT unified_id, STATE_ABBR, STATE_FIPS, ST_AsText(geometry) AS geometry
+        SELECT unified_id, STATE_ABBR, STATE_FIPS, TRACT_GEOID, ST_AsText(geometry) AS geometry
         FROM census_enriched_pv_data
         WHERE STATE_FIPS = ?
     """
@@ -264,7 +264,7 @@ def main():
     if pv_df.empty and state_abbr:
         pv_df = con.execute(
             """
-            SELECT unified_id, STATE_ABBR, STATE_FIPS, ST_AsText(geometry) AS geometry
+            SELECT unified_id, STATE_ABBR, STATE_FIPS, TRACT_GEOID, ST_AsText(geometry) AS geometry
             FROM census_enriched_pv_data
             WHERE STATE_ABBR = ?
             """,
@@ -282,10 +282,22 @@ def main():
     # State geometry (cached)
     state_fips_val = pv_gdf["STATE_FIPS"].iloc[0]
     state_geom_gdf = ensure_state_geoms(con, state_fips_val)
-    state_geom = state_geom_gdf.geometry.union_all()
-    state_bbox = box(*state_geom.bounds)
-
-    print(f"Fetching Overture land cover/use for state {state_fips_val} (release {overture_release})")
+    
+    # Get census tract geometries for PV installations to minimize LULC fetch area
+    unique_tract_geoids = pv_gdf["TRACT_GEOID"].unique().tolist()
+    print(f"Fetching {len(unique_tract_geoids)} census tract geometries for optimized LULC extraction...")
+    
+    # Fetch tract geometries from Census API
+    reader = cem.ShapeReader(year=2020)
+    all_tracts = reader.read_cb_shapefile(shapefile_scope="us", geography="tract", crs="EPSG:4326")
+    state_tracts = all_tracts[all_tracts["GEOID"].isin(unique_tract_geoids)].copy()
+    
+    # Use union of tract geometries bbox instead of full state bbox
+    tract_union = state_tracts.geometry.union_all()
+    optimized_bbox = box(*tract_union.bounds)
+    
+    print(f"Fetching Overture land cover/use for {len(unique_tract_geoids)} census tracts in state {state_fips_val} (release {overture_release})")
+    print(f"  Optimized bbox area reduction: {(1 - optimized_bbox.area / box(*state_geom_gdf.geometry.union_all().bounds).area) * 100:.1f}%")
 
     # Register PV geometries in DuckDB first
     pv_state_df = pv_gdf[["unified_id", "STATE_ABBR", "STATE_FIPS"]].copy()
@@ -299,10 +311,10 @@ def main():
         """
     )
 
-    # Fetch LULC data directly into DuckDB using S3 queries (much faster)
-    state_bbox_tuple = state_bbox.bounds  # (minx, miny, maxx, maxy)
-    fetch_overture_duckdb(con, "land_cover", state_bbox_tuple, overture_release)
-    fetch_overture_duckdb(con, "land_use", state_bbox_tuple, overture_release)
+    # Fetch LULC data using optimized census tract bbox (much smaller area than full state)
+    optimized_bbox_tuple = optimized_bbox.bounds  # (minx, miny, maxx, maxy)
+    fetch_overture_duckdb(con, "land_cover", optimized_bbox_tuple, overture_release)
+    fetch_overture_duckdb(con, "land_use", optimized_bbox_tuple, overture_release)
 
     # Check if tables were created and have data
     lc_count = con.execute("SELECT COUNT(*) FROM lc_geom").fetchone()[0]
@@ -333,8 +345,7 @@ def main():
             CREATE OR REPLACE TEMP TABLE lu_matches AS
             SELECT p.unified_id,
                    {array_merge_sql('lu.id')} AS lu_ids,
-                   {array_merge_sql('lu.subtype')} AS lu_subtypes,
-                   {array_merge_sql('lu.class')} AS lu_classes
+                   {array_merge_sql('lu.subtype')} AS lu_subtypes
             FROM pv_state_geom p
             JOIN lu_geom lu ON ST_Intersects(p.geom, lu.geometry)
             GROUP BY 1
@@ -346,7 +357,6 @@ def main():
     lc_has_subtype = lc_count > 0
     lu_has_id = lu_count > 0
     lu_has_subtype = lu_count > 0
-    lu_has_class = lu_count > 0
 
     # Merge and persist - build dynamic column list based on what exists
     lc_cols_select = []
@@ -370,17 +380,12 @@ def main():
         lu_cols_select.append("lu.lu_subtypes")
     else:
         lu_cols_select.append("NULL::VARCHAR[] AS lu_subtypes")
-    
-    if lu_has_class:
-        lu_cols_select.append("lu.lu_classes")
-    else:
-        lu_cols_select.append("NULL::VARCHAR[] AS lu_classes")
 
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS lulc_enriched_pv_data AS
         SELECT unified_id, STATE_ABBR, STATE_FIPS, NULL::VARCHAR[] AS lc_ids, NULL::VARCHAR[] AS lc_subtypes,
-               NULL::VARCHAR[] AS lu_ids, NULL::VARCHAR[] AS lu_subtypes, NULL::VARCHAR[] AS lu_classes,
+               NULL::VARCHAR[] AS lu_ids, NULL::VARCHAR[] AS lu_subtypes,
                geom AS geometry
         FROM pv_state_geom WHERE 1=0;
         """
